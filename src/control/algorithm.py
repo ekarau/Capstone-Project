@@ -1,9 +1,22 @@
-"""PDF Algorithm 1 — Load- and Area-Based Elevator Control.
+"""Two-stage load-and-area elevator control (Andrei & Ruokokoski, 2022).
 
-Two-stage decision:
-  1) weight >= weight_threshold → BYPASS (weight)
-  2) else: run YOLO + occupancy → if ratio >= area_threshold → BYPASS (area)
-                                  else → ACCEPT
+For each incoming hall call the controller emits one of three decisions
+:math:`\\delta \\in \\{\\text{accept},\\text{bypass}_W,\\text{bypass}_A\\}`
+based on the current cabin weight :math:`W` and visual occupancy
+:math:`\\rho`:
+
+.. math::
+
+    \\delta \\;=\\;
+    \\begin{cases}
+        \\text{bypass}_W & \\text{if } W \\;\\ge\\; \\tau_W \\cdot W_\\text{rated},\\\\
+        \\text{bypass}_A & \\text{else if } \\rho \\;\\ge\\; \\tau_A,\\\\
+        \\text{accept}   & \\text{otherwise.}
+    \\end{cases}
+
+Defaults: :math:`\\tau_W = 0.80`, :math:`\\tau_A = 0.90`. The weight gate
+runs first so the (cheap) load-cell reading short-circuits the (expensive)
+detector inference whenever it already returns a definitive answer.
 """
 
 from __future__ import annotations

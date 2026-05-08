@@ -1,13 +1,43 @@
-"""Occupancy estimators — three strategies.
+"""Occupancy estimators — three strategies of increasing fidelity.
 
-  CoefficientOccupancy : bbox_area_px × class_coef. Camera-angle sensitive,
-                         used as a baseline.
-  FootprintOccupancy   : Project bottom-mid of bbox to floor plane,
-                         union of per-class footprint disks. Physically
-                         meaningful but uses analytic shapely union.
-  BEVMaskOccupancy     : Same projection, but rasterizes onto a
-                         birds-eye-view binary mask. The mask is also used
-                         for visualization, ensuring numeric == visual.
+Given a list of detections :math:`D = \\{d_i\\}_{i=1}^{N}` with class
+:math:`c_i \\in \\mathcal{C}`, each estimator returns the cabin occupancy
+ratio :math:`\\rho \\in [0, 1]`.
+
+1. **CoefficientOccupancy** — fast, camera-naive baseline.
+
+   .. math::
+
+       \\rho \\;=\\; \\frac{1}{A_\\text{cabin}} \\sum_{i=1}^{N}
+            \\alpha_{c_i}\\, a^\\text{px}_i \\,/\\, \\beta,
+
+   where :math:`a^\\text{px}_i` is the bbox area in pixels,
+   :math:`\\alpha_{c_i}` is a per-class weight, and
+   :math:`\\beta = (W_\\text{frame}\\, H_\\text{frame}) / A_\\text{cabin}` is
+   the px-to-m² scale. Sensitive to camera angle.
+
+2. **FootprintOccupancy** — physically meaningful, requires homography
+   :math:`H \\in \\mathbb{R}^{3\\times3}` mapping image pixels to floor
+   metres. Each detection is projected via its bbox bottom-midpoint and
+   replaced by a disk of class-specific radius :math:`r_{c_i}`:
+
+   .. math::
+
+       \\rho \\;=\\; \\frac{1}{A_\\text{cabin}}\\,
+           \\text{Area}\\!\\left(
+               \\bigcup_{i=1}^{N} \\mathrm{Disk}\\!\\big(H\\,p_i,\\; r_{c_i}\\big)
+           \\right).
+
+   Uses :mod:`shapely` for the analytic union.
+
+3. **BEVMaskOccupancy** — rasterized version of the above on a
+   :math:`P \\times P` birds-eye-view mask. The same mask is reused for
+   visualization, guaranteeing that the displayed BEV and the reported
+   ratio agree exactly:
+
+   .. math::
+
+       \\rho \\;=\\; \\frac{\\#\\{(u,v) : M(u,v) = 1\\}}{P^2}.
 """
 
 from __future__ import annotations

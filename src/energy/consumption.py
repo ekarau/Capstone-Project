@@ -1,25 +1,35 @@
-"""Elevator power & energy estimator following Tukia et al. (2018).
+"""Elevator power and energy estimator after Tukia et al. (2018).
 
-Implements the simplified model from §2 of the paper:
+This module implements the simplified energy model from Section 2 of the
+reference paper. Total session energy decomposes as
 
-    Etot = Estationary + Erunning
+.. math::
 
-For each elevator start (one floor->floor traversal):
+    E_\\text{tot} \\;=\\; E_\\text{stationary} \\;+\\; E_\\text{running}.
 
-    Epotential   = (mload - K * mnominal) * g * h            (Eq. 3)
-    Erunning     = Epotential / eta   if positive
-                 = Epotential * eta   if negative (regen)    (Eq. 4)
-    Estart_total = Erunning + (Pidle + Pcontrol) * tstart    (Eq. 11)
+For each *start* (a floor-to-floor traversal of distance :math:`h`):
 
-Stationary stretches are billed at:
+.. math::
 
-    t <= 5 min   → Pidle
-    5–30 min     → Pstandby_5min
-    > 30 min     → Pstandby_30min                            (Eq. 14)
+    E_\\text{potential} &= \\big(m_\\text{load} - K \\cdot m_\\text{nominal}\\big)\\,g\\,h
+        \\hfill\\text{(Eq. 3)} \\\\
+    E_\\text{running}   &= \\begin{cases}
+        E_\\text{potential} / \\eta & \\text{if } E_\\text{potential} \\ge 0\\\\
+        E_\\text{potential} \\cdot \\eta & \\text{otherwise (regenerative)}
+    \\end{cases} \\hfill\\text{(Eq. 4)} \\\\
+    E_\\text{start} &= E_\\text{running}
+        + (P_\\text{idle} + P_\\text{control})\\,t_\\text{start}
+        \\hfill\\text{(Eq. 11)}
 
-The unit-test of value is in `estimate_session_energy`, which a control
-simulator can call after each scheduled stop to compare "smart bypass"
-vs "naive accept".
+Stationary stretches follow the three-tier ISO 25745-2 schedule (Eq. 14):
+
+* :math:`t \\le 5\\,\\text{min}`  : :math:`P_\\text{idle}`
+* :math:`5\\text{–}30\\,\\text{min}`: :math:`P_\\text{standby,5}`
+* :math:`t > 30\\,\\text{min}`     : :math:`P_\\text{standby,30}`
+
+The high-level entry point is :func:`estimate_session_energy`, which a
+control simulator calls after each scheduled stop to compare "smart
+bypass" against "naive accept".
 """
 
 from __future__ import annotations
