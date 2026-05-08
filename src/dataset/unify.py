@@ -68,7 +68,7 @@ class SourceSpec:
 #  Verified against actual data.yaml of each Roboflow export.
 # ─────────────────────────────────────────────────────────────────────
 SOURCES: list[SourceSpec] = [
-    # Kullanıcının "asansör senaryosu" referans verisi → 100% test-only.
+    # User's reference "real-cabin scenario" — held out 100% as test set.
     SourceSpec(
         folder="Elevator.yolov8",
         class_map={0: "person"},
@@ -86,15 +86,15 @@ SOURCES: list[SourceSpec] = [
     SourceSpec(
         folder="top down view.yolov8",
         class_map={0: "person"},
-        # Sadece 39 görüntü — train/val/test çok küçük olur.
-        # Hepsini train'e koymak için val_ratio + test_ratio = 0.
+        # Only 39 images — splitting into train/val/test would yield empty sets.
+        # All go to train (val_ratio + test_ratio = 0).
         train_ratio=1.0, val_ratio=0.0, test_ratio=0.0,
     ),
     SourceSpec(
         folder="normal3.yolov8",
         class_map={0: "person"},
     ),
-    # Stroller multi-class (yalnız person/stroller/luggage)
+    # Stroller multi-class source (person/stroller/luggage subset only)
     SourceSpec(
         folder="Stroller.yolov8",
         class_map={
@@ -118,13 +118,13 @@ SOURCES: list[SourceSpec] = [
         folder="suitcase.yolov8",
         class_map={0: "luggage", 1: "luggage", 2: None, 3: None},
     ),
-    # Box (155 görüntü — küçük; en az birkaç tanesi test'e ayrılır)
+    # Box (155 images — small; at least a few go to the test split)
     SourceSpec(
         folder="box.yolov8",
         class_map={0: "box"},
         train_ratio=0.78, val_ratio=0.15, test_ratio=0.07,
     ),
-    # LASTDATASET'ten dedup edilmiş yeni veri — 737 imaj, 982 person/91 stroller/
+    # Deduplicated additions from LASTDATASET — 737 images, 982 person / 91 stroller /
     # 130 luggage/222 box. scripts/import_lastdataset.py ile temizlendi.
     SourceSpec(
         folder="lastdataset_extra.yolov8",

@@ -28,12 +28,12 @@ def _deep_merge(base: dict, override: dict) -> dict:
 def load_config(*paths: str | Path) -> dict:
     """Load and merge multiple YAML config files (later overrides earlier)."""
     if not paths:
-        raise ValueError("En az bir config yolu verin.")
+        raise ValueError("At least one config path is required.")
     merged: dict = {}
     for p in paths:
         p = Path(p)
         if not p.exists():
-            raise FileNotFoundError(f"Config bulunamadı: {p}")
+            raise FileNotFoundError(f"Config not found: {p}")
         with open(p, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         merged = _deep_merge(merged, data)
@@ -74,7 +74,7 @@ class ElevatorConfig:
             if isinstance(value, dict):
                 return _DotDict(value)
             return value
-        raise AttributeError(f"Config'te '{name}' yok.")
+        raise AttributeError(f"No section named {name!r} in config.")
 
     def __getitem__(self, key: str) -> Any:
         return self._data[key]
