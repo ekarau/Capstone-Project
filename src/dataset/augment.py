@@ -23,7 +23,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from src.dataset.unify import TARGET_CLASSES, TARGET_ID
+from src.dataset.unify import TARGET_ID
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -83,7 +83,7 @@ def _read_label(path: Path) -> tuple[list[list[float]], list[int]]:
     bboxes, cls_ids = [], []
     if not path.exists():
         return bboxes, cls_ids
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         for line in f:
             parts = line.strip().split()
             if len(parts) != 5:
@@ -111,15 +111,13 @@ def _read_label(path: Path) -> tuple[list[list[float]], list[int]]:
 
 def _write_label(path: Path, bboxes: list[list[float]], cls_ids: list[int]) -> None:
     with open(path, "w", encoding="utf-8") as f:
-        for cls_id, b in zip(cls_ids, bboxes):
+        for cls_id, b in zip(cls_ids, bboxes, strict=True):
             # Clamp to [0, 1] — Albumentations may emit -1e-7 due to float ops
             b = [max(0.0, min(1.0, float(v))) for v in b]
             # Reject degenerate bboxes after clamping
             if b[2] <= 0 or b[3] <= 0:
                 continue
-            f.write(
-                f"{int(cls_id)} {b[0]:.6f} {b[1]:.6f} {b[2]:.6f} {b[3]:.6f}\n"
-            )
+            f.write(f"{int(cls_id)} {b[0]:.6f} {b[1]:.6f} {b[2]:.6f} {b[3]:.6f}\n")
 
 
 def augment_train_split(

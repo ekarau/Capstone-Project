@@ -32,7 +32,6 @@ from src.perception.homography import (
     save_homography,
 )
 
-
 CORNER_LABELS = ["1: BACK-LEFT", "2: BACK-RIGHT", "3: FRONT-RIGHT", "4: FRONT-LEFT"]
 
 
@@ -54,8 +53,9 @@ class Picker:
         colors = [(0, 255, 0), (0, 200, 255), (255, 100, 100), (255, 0, 255)]
         for i, p in enumerate(self.points):
             cv2.circle(img, p, 6, colors[i], -1)
-            cv2.putText(img, str(i + 1), (p[0] + 8, p[1] + 4),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, colors[i], 2)
+            cv2.putText(
+                img, str(i + 1), (p[0] + 8, p[1] + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.7, colors[i], 2
+            )
         if len(self.points) == 4:
             cv2.polylines(img, [np.array(self.points)], True, (255, 255, 255), 1)
         # Hint
@@ -63,10 +63,10 @@ class Picker:
         hint = "DONE — press 's' to save, 'q' to quit, RIGHT-CLICK to undo"
         if next_idx < 4:
             hint = f"Click corner {CORNER_LABELS[next_idx]}  (right-click to undo)"
-        cv2.putText(img, hint, (10, 28), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6, (0, 0, 0), 4, cv2.LINE_AA)
-        cv2.putText(img, hint, (10, 28), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6, (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.putText(img, hint, (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 4, cv2.LINE_AA)
+        cv2.putText(
+            img, hint, (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA
+        )
         return img
 
 

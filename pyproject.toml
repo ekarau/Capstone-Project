@@ -99,13 +99,31 @@ select = [
     "RUF",    # ruff-specific
 ]
 ignore = [
-    "E501",   # line too long (handled by formatter)
-    "B008",   # default function args (common in dataclasses)
+    "E501",    # line too long — handled by formatter
+    "B008",    # default function args — common in dataclasses
+    # Math notation tolerated repo-wide (uppercase H for homography,
+    # K for counterweight ratio, etc.) — these are domain conventions.
+    "N803",    # invalid argument name (e.g. `H`)
+    "N806",    # non-lowercase variable in function (e.g. `H`)
+    "N812",    # lowercase imported as non-lowercase
+    "N815",    # mixed-case in class scope
+    # Unicode characters are intentional in docstrings / comments
+    # (×, →, ≥, m², etc. carry scientific meaning).
+    "RUF002",  # ambiguous unicode in docstrings
+    "RUF003",  # ambiguous unicode in comments
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["N802", "N803"]    # allow pytest naming conventions
-"__init__.py" = ["F401"]        # allow re-exports
+# These entry-point scripts use a `sys.path.insert(...)` hack so they can
+# be invoked both as `python <script>.py` and as `python -m <module>`.
+# That intentionally places imports below module-level code.
+"scripts/*" = ["E402"]
+"tools/*" = ["E402"]
+"src/detection/train.py" = ["E402"]
+# pytest naming conventions
+"tests/*" = ["N802"]
+# allow re-exports
+"__init__.py" = ["F401"]
 
 [tool.ruff.format]
 quote-style = "double"

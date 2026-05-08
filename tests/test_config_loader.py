@@ -6,7 +6,6 @@ import textwrap
 from pathlib import Path
 
 import pytest
-
 from src.utils.config_loader import ElevatorConfig, load_config
 
 

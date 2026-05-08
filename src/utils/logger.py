@@ -6,7 +6,6 @@ import logging
 import sys
 from pathlib import Path
 
-
 _CONFIGURED = False
 
 
