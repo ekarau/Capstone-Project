@@ -1,0 +1,11 @@
+filename,gt_count,gt_is_full,notes
+cabin_001.jpg,0,False,empty cabin reference
+cabin_002.jpg,2,False,two passengers near door
+cabin_003.jpg,4,False,half-full
+cabin_004.jpg,6,False,getting crowded but still has space
+cabin_005.jpg,7,True,at capacity threshold (7/8 = 87.5%)
+cabin_006.jpg,8,True,fully packed
+cabin_007.jpg,8,True,packed with stroller
+cabin_008.jpg,3,False,one person and luggage
+cabin_009.jpg,5,False,medium occupancy
+cabin_010.jpg,9,True,over capacity
