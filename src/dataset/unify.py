@@ -25,9 +25,9 @@ import random
 import re
 import shutil
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
 
 from src.utils.logger import get_logger
 
@@ -88,7 +88,9 @@ SOURCES: list[SourceSpec] = [
         class_map={0: "person"},
         # Only 39 images — splitting into train/val/test would yield empty sets.
         # All go to train (val_ratio + test_ratio = 0).
-        train_ratio=1.0, val_ratio=0.0, test_ratio=0.0,
+        train_ratio=1.0,
+        val_ratio=0.0,
+        test_ratio=0.0,
     ),
     SourceSpec(
         folder="normal3.yolov8",
@@ -98,11 +100,11 @@ SOURCES: list[SourceSpec] = [
     SourceSpec(
         folder="Stroller.yolov8",
         class_map={
-            0: "person",     # 0-human
-            1: None,         # 1-wheelchair
-            2: "luggage",    # 2-suitcase
-            3: "stroller",   # 3-stroller
-            4: None,         # 4-bicycle
+            0: "person",  # 0-human
+            1: None,  # 1-wheelchair
+            2: "luggage",  # 2-suitcase
+            3: "stroller",  # 3-stroller
+            4: None,  # 4-bicycle
         },
     ),
     # Luggage / suitcase datasets
@@ -122,7 +124,9 @@ SOURCES: list[SourceSpec] = [
     SourceSpec(
         folder="box.yolov8",
         class_map={0: "box"},
-        train_ratio=0.78, val_ratio=0.15, test_ratio=0.07,
+        train_ratio=0.78,
+        val_ratio=0.15,
+        test_ratio=0.07,
     ),
     # Deduplicated additions from LASTDATASET — 737 images, 982 person / 91 stroller /
     # 130 luggage/222 box. scripts/import_lastdataset.py ile temizlendi.
@@ -236,7 +240,7 @@ def _remap_label_file(
         return [], 0, 0
     new_lines: list[str] = []
     kept, dropped = 0, 0
-    with open(label_path, "r", encoding="utf-8") as f:
+    with open(label_path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -273,9 +277,7 @@ def _remap_label_file(
             if bbox[2] <= 0 or bbox[3] <= 0:
                 dropped += 1
                 continue
-            new_lines.append(
-                f"{new_id} {bbox[0]:.6f} {bbox[1]:.6f} {bbox[2]:.6f} {bbox[3]:.6f}"
-            )
+            new_lines.append(f"{new_id} {bbox[0]:.6f} {bbox[1]:.6f} {bbox[2]:.6f} {bbox[3]:.6f}")
             kept += 1
     return new_lines, kept, dropped
 
@@ -331,10 +333,7 @@ def _split_groups(
     for k in keys:
         # Pick the split currently most under-target (in absolute units)
         deficits = {s: targets[s] - counts[s] for s in splits if targets[s] > 0}
-        if not deficits:
-            chosen = "train"
-        else:
-            chosen = max(deficits, key=deficits.get)
+        chosen = "train" if not deficits else max(deficits, key=deficits.get)
         splits[chosen].add(k)
         counts[chosen] += len(groups[k])
 
@@ -381,14 +380,14 @@ def unify_datasets(
 
         # 1) Collect per-source images grouped by their video/session prefix
         per_group: dict[str, list[tuple[Path, list[str]]]] = defaultdict(list)
-        for split, img_dir, lbl_dir in _iter_split_dirs(src_dir):
+        for _split, img_dir, lbl_dir in _iter_split_dirs(src_dir):
             for img_path in sorted(img_dir.iterdir()):
                 if not img_path.is_file():
                     continue
                 if img_path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".bmp"}:
                     continue
                 lbl_path = lbl_dir / f"{img_path.stem}.txt"
-                new_lines, kept, dropped = _remap_label_file(lbl_path, spec.class_map)
+                new_lines, _kept, _dropped = _remap_label_file(lbl_path, spec.class_map)
                 if not new_lines:
                     if not lbl_path.exists() or lbl_path.stat().st_size == 0:
                         skipped_empty += 1
@@ -419,9 +418,7 @@ def unify_datasets(
             for gkey in gkeys:
                 group_to_splits[gkey].add(split_name)
                 for img_path, lines in per_group[gkey]:
-                    dst_img = _safe_copy_image(
-                        img_path, out_root / split_name / "images", prefix
-                    )
+                    dst_img = _safe_copy_image(img_path, out_root / split_name / "images", prefix)
                     _write_label(lines, out_root / split_name / "labels", dst_img.name)
                     per_split_count[split_name] += 1
 

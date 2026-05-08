@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from src.energy.consumption import (
     EnergyParams,
     StartProfile,
@@ -41,10 +40,7 @@ def test_stop_energy_components_sum_to_total(params: EnergyParams) -> None:
     profile = StartProfile(load_kg=200.0, floors_traveled=3, direction_up=True)
     result = estimate_stop_energy(profile, params)
     components = (
-        result["running_j"]
-        + result["aux_motion_j"]
-        + result["doors_j"]
-        + result["stop_idle_j"]
+        result["running_j"] + result["aux_motion_j"] + result["doors_j"] + result["stop_idle_j"]
     )
     assert components == pytest.approx(result["total_j"])
 

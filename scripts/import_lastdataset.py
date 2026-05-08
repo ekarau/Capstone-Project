@@ -74,10 +74,16 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", required=True, help="LASTDATASET root")
     ap.add_argument("--existing-datas", required=True, help="Existing Capstone/datas dir")
-    ap.add_argument("--out-name", default="lastdataset_extra.yolov8",
-                    help="Folder name to create under existing-datas/")
-    ap.add_argument("--skip-aug-prefix", default="aug_",
-                    help="Skip images whose name starts with this (default 'aug_')")
+    ap.add_argument(
+        "--out-name",
+        default="lastdataset_extra.yolov8",
+        help="Folder name to create under existing-datas/",
+    )
+    ap.add_argument(
+        "--skip-aug-prefix",
+        default="aug_",
+        help="Skip images whose name starts with this (default 'aug_')",
+    )
     args = ap.parse_args()
 
     src = Path(args.src).resolve()
@@ -184,7 +190,9 @@ def main() -> None:
     print('           class_map={0:"person", 1:"stroller", 2:"luggage", 3:"box"},')
     print("       )")
     print("  2. python -m scripts.prepare_dataset --raw <datas> --out data/unified")
-    print("  3. python -m scripts.augment_dataset --unified data/unified --config configs/default.yaml")
+    print(
+        "  3. python -m scripts.augment_dataset --unified data/unified --config configs/default.yaml"
+    )
 
 
 if __name__ == "__main__":

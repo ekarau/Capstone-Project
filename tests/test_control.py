@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-
 from src.control.algorithm import ControlDecision, ControlResult, ElevatorController
 
 
@@ -28,7 +27,7 @@ class _FakeOccupancy:
     def __init__(self, ratio: float) -> None:
         self.ratio = ratio
 
-    def estimate(self, detections) -> float:  # noqa: ARG002
+    def estimate(self, detections) -> float:
         return self.ratio
 
 

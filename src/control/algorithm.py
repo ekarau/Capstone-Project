@@ -67,9 +67,7 @@ class ElevatorController:
 
         # Stage 1: weight check
         if weight_ratio >= self.weight_bypass_ratio:
-            self._logger.debug(
-                f"Bypass (weight): {weight_kg:.1f} kg / {self.max_weight_kg} kg"
-            )
+            self._logger.debug(f"Bypass (weight): {weight_kg:.1f} kg / {self.max_weight_kg} kg")
             return ControlResult(
                 decision=ControlDecision.BYPASS_BY_WEIGHT,
                 weight_kg=weight_kg,

@@ -28,7 +28,7 @@ def audit_yolo_dataset(root: Path) -> dict:
             if lbl_path.stat().st_size == 0:
                 empty += 1
                 continue
-            with open(lbl_path, "r", encoding="utf-8") as f:
+            with open(lbl_path, encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
                     if not line:
@@ -63,7 +63,9 @@ def print_audit(report: dict, class_names: list[str] | None = None) -> None:
         print(f"  empty labels : {info['empty_labels']}")
         print(f"  bad lines    : {info['bad_lines']}")
         for cls_id, n in sorted(info["instances_per_class"].items()):
-            label = class_names[cls_id] if class_names and cls_id < len(class_names) else f"id={cls_id}"
+            label = (
+                class_names[cls_id] if class_names and cls_id < len(class_names) else f"id={cls_id}"
+            )
             print(f"  {label:>10s} : {n}")
     if report["issues"]:
         print(f"\nIssues ({len(report['issues'])}):")

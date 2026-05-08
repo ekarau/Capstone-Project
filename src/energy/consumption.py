@@ -68,7 +68,7 @@ class EnergyParams:
     stop_time_s: float = 4.0
 
     @classmethod
-    def from_config(cls, cfg: dict) -> "EnergyParams":
+    def from_config(cls, cfg: dict) -> EnergyParams:
         elev = cfg["elevator"]
         en = cfg["energy"]
         return cls(
@@ -117,7 +117,9 @@ def _start_time_s(distance_m: float, p: EnergyParams) -> float:
     return 2 * math.sqrt(distance_m / a)
 
 
-def estimate_running_energy(load_kg: float, distance_m: float, direction_up: bool, p: EnergyParams) -> float:
+def estimate_running_energy(
+    load_kg: float, distance_m: float, direction_up: bool, p: EnergyParams
+) -> float:
     """Erunning_i in joules per Tukia Eq. (3)–(4)."""
     sign = 1.0 if direction_up else -1.0
     net_mass = (p.empty_car_mass_kg + load_kg) - (
@@ -157,14 +159,10 @@ def estimate_stationary_energy(idle_seconds: float, p: EnergyParams) -> float:
     """ISO 25745-2 three-tier stationary energy in Joules."""
     if idle_seconds <= 0:
         return 0.0
-    t1 = min(idle_seconds, 300.0)               # 0–5 min
-    t2 = max(0.0, min(idle_seconds, 1800.0) - 300.0)   # 5–30 min
-    t3 = max(0.0, idle_seconds - 1800.0)        # >30 min
-    return (
-        p.power_idle_w * t1
-        + p.power_standby_5min_w * t2
-        + p.power_standby_30min_w * t3
-    )
+    t1 = min(idle_seconds, 300.0)  # 0–5 min
+    t2 = max(0.0, min(idle_seconds, 1800.0) - 300.0)  # 5–30 min
+    t3 = max(0.0, idle_seconds - 1800.0)  # >30 min
+    return p.power_idle_w * t1 + p.power_standby_5min_w * t2 + p.power_standby_30min_w * t3
 
 
 @dataclass

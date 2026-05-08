@@ -47,7 +47,9 @@ class ComparisonResult:
         return {
             "energy_saved_pct": (b - s) / b * 100 if b > 0 else 0.0,
             "stops_saved_pct": (
-                (self.baseline.accepted - self.smart.accepted) / max(1, self.baseline.accepted) * 100
+                (self.baseline.accepted - self.smart.accepted)
+                / max(1, self.baseline.accepted)
+                * 100
             ),
         }
 
