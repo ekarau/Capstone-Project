@@ -1,11 +1,11 @@
-filename,gt_person,gt_stroller,gt_luggage,gt_box,gt_is_full,notes
-cabin_001.jpg,0,0,0,0,,empty cabin reference
-cabin_002.jpg,2,0,1,0,,two passengers + small luggage
-cabin_003.jpg,4,0,0,0,,half-full
-cabin_004.jpg,5,1,0,0,,medium with stroller
-cabin_005.jpg,7,0,0,0,,at capacity (7/8)
-cabin_006.jpg,8,0,0,0,,fully packed
-cabin_007.jpg,6,1,1,0,,packed with stroller and luggage
-cabin_008.jpg,3,0,0,2,,three people and two boxes
-cabin_009.jpg,5,0,2,0,,medium occupancy with luggage
-cabin_010.jpg,9,0,0,0,,over capacity
+filename,gt_person,gt_stroller,gt_luggage,gt_box,gt_is_full
+cabin_001.jpg,0,0,0,0,
+cabin_002.jpg,2,0,1,0,
+cabin_003.jpg,4,0,0,0,
+cabin_004.jpg,5,1,0,0,
+cabin_005.jpg,7,0,0,0,
+cabin_006.jpg,8,0,0,0,
+cabin_007.jpg,6,1,1,0,
+cabin_008.jpg,3,0,0,2,
+cabin_009.jpg,5,0,2,0,
+cabin_010.jpg,9,0,0,0,

@@ -11,8 +11,8 @@ data/sim/
 │   ├── cabin_001.jpg
 │   ├── cabin_002.jpg
 │   └── ...
-├── ground_truth.csv              ← (you create this) labels for each image
-└── ground_truth_template.csv     ← copy/edit this file
+├── ground_truth.csv              ← labels for each image (you fill this in)
+└── ground_truth_template.csv     ← copy this and start labeling
 ```
 
 ## How to label
@@ -21,18 +21,28 @@ data/sim/
    - ~10 **empty / lightly occupied** scenes (0–3 passengers)
    - ~10 **medium** scenes (4–6 passengers)
    - ~10 **at-or-above capacity** scenes (≥ ⌈0.85 × rated⌉ passengers)
-2. Drop them into `data/sim/images/` with consistent filenames (e.g. `cabin_001.jpg`).
+2. Drop them into `data/sim/images/` with consistent filenames.
 3. Copy the template:
    ```
    cp ground_truth_template.csv ground_truth.csv
    ```
 4. For each image, edit `ground_truth.csv`:
    - `filename`: the image filename
-   - `gt_count`: number of people physically present
-   - `gt_is_full`: `True` if the cabin should bypass an inbound hall call.
-     Default rule: `gt_is_full = (gt_count >= ceil(0.85 × rated_capacity))`.
-     For an 8-person cabin → `True` when `gt_count >= 7`.
-   - `notes`: short free-text description (optional but recommended)
+   - `gt_person`: number of people physically present
+   - `gt_stroller`: number of strollers
+   - `gt_luggage`: number of luggage items
+   - `gt_box`: number of boxes / cartons
+   - `gt_is_full`: leave **blank** to auto-derive from the multi-class
+     occupancy ratio, or write `True` / `False` to override
+
+The script computes the true occupancy as
+
+```
+occupancy = (gt_person × 0.20) + (gt_stroller × 0.45)
+          + (gt_luggage × 0.18) + (gt_box × 0.20)   [in m²]
+```
+
+and flags the cabin as full when `occupancy / cabin_area ≥ 0.90`.
 
 ## Run the simulation
 
@@ -43,8 +53,22 @@ python -m scripts.run_simulation \
     --weights models/weights/best.pt \
     --rated-capacity 8 \
     --num-calls 1000 \
-    --output results/simulation
+    --output results/simulation/baseline
 ```
 
-The script writes `confusion_matrix.png`, `energy_savings.csv`, and a Markdown
-report under the chosen output directory.
+Hybrid mode (with a separately trained head detector):
+
+```bash
+python -m scripts.run_simulation \
+    --images data/sim/images \
+    --ground-truth data/sim/ground_truth.csv \
+    --weights models/weights/best.pt \
+    --head-weights models/weights/best_head.pt \
+    --rated-capacity 8 \
+    --num-calls 1000 \
+    --output results/simulation/hybrid
+```
+
+The script writes `confusion_matrix.png`, `per_image_decisions.csv`,
+`per_class_detection.csv`, `energy_savings.csv` and `report.md` under the
+chosen output directory.

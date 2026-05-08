@@ -6,7 +6,7 @@ Pipeline
 1. Load every image in ``data/sim/images/`` together with its multi-class
    ground-truth row from ``data/sim/ground_truth.csv``::
 
-       filename, gt_person, gt_stroller, gt_luggage, gt_box, gt_is_full, notes
+       filename, gt_person, gt_stroller, gt_luggage, gt_box, gt_is_full
 
    ``gt_is_full`` may be left blank — the script then derives it from the
    true cabin occupancy ratio computed from the per-class instance counts.
@@ -116,7 +116,6 @@ class GroundTruth:
     gt_box: int
     gt_is_full: bool
     gt_occupancy_ratio: float
-    notes: str
 
 
 @dataclass
@@ -157,10 +156,10 @@ def load_ground_truth(
 ) -> list[GroundTruth]:
     """Read the per-image ground-truth CSV.
 
-    The new schema is ``filename, gt_person, gt_stroller, gt_luggage,
-    gt_box, gt_is_full, notes``. ``gt_is_full`` is auto-derived when
-    blank: the cabin is considered full when the multi-class occupancy
-    ratio reaches ``area_threshold``.
+    The schema is ``filename, gt_person, gt_stroller, gt_luggage,
+    gt_box, gt_is_full``. ``gt_is_full`` is auto-derived when blank:
+    the cabin is considered full when the multi-class occupancy ratio
+    reaches ``area_threshold``.
     """
     rows: list[GroundTruth] = []
     with open(csv_path, encoding="utf-8") as f:
@@ -194,7 +193,6 @@ def load_ground_truth(
                     gt_box=counts["box"],
                     gt_is_full=gt_full,
                     gt_occupancy_ratio=gt_occ,
-                    notes=(row.get("notes") or "").strip(),
                 )
             )
     return rows
