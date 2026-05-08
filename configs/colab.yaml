@@ -1,0 +1,16 @@
+# Colab-specific override — uses Drive paths.
+# Usage: --config configs/colab.yaml
+
+random_seed: 42
+
+paths:
+  raw_data: /content/drive/MyDrive/Capstone/data/raw
+  unified_data: /content/drive/MyDrive/Capstone/data/unified
+  weights: /content/drive/MyDrive/Capstone/models/weights
+  results: /content/drive/MyDrive/Capstone/results
+
+model:
+  variant: yolov8s
+  batch_size: 32                # Colab T4 için
+  epochs: 100
+  pretrained_weights: yolov8s.pt

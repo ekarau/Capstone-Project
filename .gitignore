@@ -1,0 +1,83 @@
+# ──────────────────────────────────────────────────────────────────────
+#  Python
+# ──────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+build/
+dist/
+.eggs/
+develop-eggs/
+.installed.cfg
+MANIFEST
+
+# ──────────────────────────────────────────────────────────────────────
+#  Virtual environments
+# ──────────────────────────────────────────────────────────────────────
+venv/
+env/
+.venv/
+.env
+.envrc
+ENV/
+env.bak/
+venv.bak/
+
+# ──────────────────────────────────────────────────────────────────────
+#  Dataset & model artifacts (large, generated, or sensitive)
+# ──────────────────────────────────────────────────────────────────────
+data/raw/
+data/unified/
+data/eval/
+*.zip
+*.tar.gz
+
+models/weights/*.pt
+models/weights/*.onnx
+models/weights/*.engine
+runs/
+yolov8*.pt
+yolo11*.pt
+
+# ──────────────────────────────────────────────────────────────────────
+#  Notebook artefacts
+# ──────────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*-checkpoint.ipynb
+
+# ──────────────────────────────────────────────────────────────────────
+#  Tooling caches
+# ──────────────────────────────────────────────────────────────────────
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# ──────────────────────────────────────────────────────────────────────
+#  IDE / editor
+# ──────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ──────────────────────────────────────────────────────────────────────
+#  Project-specific
+# ──────────────────────────────────────────────────────────────────────
+results/logs/
+results/runs/
+*.log
+notebook_cell*_out*.png
+05_train_v2_area.ipynb     # root copy with Colab outputs (canonical is in notebooks/)

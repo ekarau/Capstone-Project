@@ -1,0 +1,161 @@
+# ============================================================
+#  Smart Elevator CV — Default Configuration
+# ============================================================
+# Bu dosya tüm modülün varsayılan parametrelerini barındırır.
+# Senaryoya özgü değerleri ayrı bir YAML'da tanımlayıp komut
+# satırından --config flag'i ile yükleyebilirsiniz.
+
+random_seed: 42
+
+# ──────────────────────────────────────────────────────────────
+#  Asansör Fiziksel Parametreleri
+# ──────────────────────────────────────────────────────────────
+elevator:
+  width_m: 1.4                  # Kabin genişliği (m)
+  depth_m: 1.6                  # Kabin derinliği (m)
+  height_m: 2.4                 # Kabin yüksekliği (m)
+  total_floor_area_m2: 2.24     # = width × depth (override edilebilir)
+  max_weight_kg: 630            # Nominal yük kapasitesi
+  rated_capacity_persons: 8     # Nominal kişi sayısı (max_weight / 75kg)
+  empty_car_mass_kg: 800        # Kabin boş kütlesi (mcar) — Tukia 2018
+  counterweight_K: 0.45         # Karşı ağırlık katsayısı (40-50%) — Eq. (2)
+  motor_efficiency: 0.85        # Hoisting verimi (regen elevator için ~0.85)
+  rated_speed_mps: 1.0          # Nominal hız (m/s)
+  acceleration_mps2: 0.8        # Tipik ivme/yavaşlama
+  floor_height_m: 3.0           # Kat yüksekliği (m)
+  floors_count: 10              # Toplam kat sayısı
+
+# ──────────────────────────────────────────────────────────────
+#  Kontrol Algoritması Eşik Değerleri (PDF Algorithm 1)
+# ──────────────────────────────────────────────────────────────
+thresholds:
+  weight_bypass_ratio: 0.80     # Ağırlık bypass eşiği (load > 80%)
+  area_bypass_ratio: 0.90       # Alan bypass eşiği (occupancy > 90%)
+  confidence_min: 0.40          # YOLO minimum confidence
+  iou_min: 0.45                 # NMS IoU eşiği
+
+# ──────────────────────────────────────────────────────────────
+#  Sınıflar — Tezdeki §3.10 ile birebir uyumlu
+# ──────────────────────────────────────────────────────────────
+classes:
+  - person
+  - stroller
+  - luggage
+  - box
+
+# ──────────────────────────────────────────────────────────────
+#  YOLOv8 Eğitim Ayarları
+# ──────────────────────────────────────────────────────────────
+model:
+  variant: yolov8s              # n=nano, s=small, m=medium
+  input_size: 640
+  epochs: 100
+  batch_size: 16
+  learning_rate: 0.01
+  patience: 25
+  pretrained_weights: yolov8s.pt
+  trained_weights: models/weights/best.pt
+
+  presets:
+    fast:
+      variant: yolov8n
+      pretrained_weights: yolov8n.pt
+      epochs: 60
+    balanced:
+      variant: yolov8s
+      pretrained_weights: yolov8s.pt
+      epochs: 100
+    accurate:
+      variant: yolov8m
+      pretrained_weights: yolov8m.pt
+      epochs: 150
+
+# ──────────────────────────────────────────────────────────────
+#  Occupancy Hesaplama
+# ──────────────────────────────────────────────────────────────
+# method: "coefficient" | "footprint" | "bev_mask"
+#   coefficient → bbox_area_px × class_coef (hızlı baseline)
+#   footprint   → bbox alt-orta noktası → daire (homografi gerekli)
+#   bev_mask    → birds-eye-view warp + sınıfa özgü ayak izi maskesi
+occupancy:
+  method: bev_mask
+
+  # Yöntem 1: Sabit katsayı (PDF §3.10 weighted units, m² olarak normalize)
+  area_coefficients:
+    person: 0.30
+    stroller: 0.65
+    luggage: 0.70
+    box: 0.55
+
+  # Yöntem 2 & 3: Sınıfa özgü ayak izi yarıçapı (m)
+  footprint_radius_m:
+    person: 0.18                # ~36 cm omuz / 2
+    stroller: 0.30
+    luggage: 0.22
+    box: 0.20
+
+# ──────────────────────────────────────────────────────────────
+#  Kamera Kalibrasyonu
+# ──────────────────────────────────────────────────────────────
+camera:
+  frame_width_px: 640
+  frame_height_px: 480
+  homography_path: configs/homography.yaml
+  bev_resolution_px: 400        # BEV haritası boyutu (kare)
+
+# ──────────────────────────────────────────────────────────────
+#  Augmentation
+# ──────────────────────────────────────────────────────────────
+augmentation:
+  enabled: true
+  # Sınıf başına augmentation çarpanı (az olan veya zor sınıf için yüksek)
+  # NOT: person=3 — ilk eğitimde recall 0.47 idi, occlusion'lı kalabalık asansör
+  # senaryoları için ek augmentation gerekiyor.
+  per_class_multiplier:
+    person: 3                  # 1 -> 3 (occlusion'a karşı çeşitlilik)
+    stroller: 2
+    luggage: 2
+    box: 5
+  geometric:
+    horizontal_flip_p: 0.5
+    rotate_limit_deg: 15
+    scale_limit: 0.25          # 0.20 -> 0.25 (mesafe çeşitliliği)
+    translate_limit: 0.12      # 0.10 -> 0.12
+    mosaic_p: 0.5
+  photometric:
+    brightness_limit: 0.30     # 0.25 -> 0.30 (asansör ışığı çeşitliliği)
+    contrast_limit: 0.30
+    hsv_h: 0.015
+    hsv_s: 0.5                 # 0.4 -> 0.5 (kıyafet rengi çeşitliliği)
+    hsv_v: 0.4
+    gaussian_noise_p: 0.25
+  occlusion:
+    # Random erasing person'a özellikle yarar — yapay occlusion simülasyonu.
+    # Wu et al. (2024) yaklaşımına uygun.
+    random_erasing_p: 0.45     # 0.30 -> 0.45 (occlusion simülasyonu)
+    cutout_max_h_w: 0.20       # 0.15 -> 0.20 (daha büyük kapatma)
+
+# ──────────────────────────────────────────────────────────────
+#  Enerji Modeli (Tukia et al. 2018)
+# ──────────────────────────────────────────────────────────────
+energy:
+  power_idle_w: 50              # Pidle (boşta tüketim)
+  power_control_w: 30           # Pcontrol (kontrol elektroniği)
+  power_standby_5min_w: 30      # 5-min standby (5 dk sonra)
+  power_standby_30min_w: 15     # 30-min standby (30 dk sonra)
+  power_doors_w: 100            # Kapı motoru tüketimi
+  door_open_close_time_s: 3.0
+  stop_time_s: 4.0              # Bir durakta geçen süre (yolcu in-out)
+  passenger_avg_mass_kg: 75
+  regenerative: true            # Modern asansörlerde geri kazanım
+
+# ──────────────────────────────────────────────────────────────
+#  Dataset Yolları
+# ──────────────────────────────────────────────────────────────
+paths:
+  raw_data: data/raw
+  unified_data: data/unified
+  eval_data: data/eval
+  weights: models/weights
+  results: results
+  logs: results/logs

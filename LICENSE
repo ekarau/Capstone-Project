@@ -1,0 +1,71 @@
+Smart Elevator CV — Proprietary License
+=========================================
+
+Copyright (c) 2026 Ege Karaurgan and Vedat Efe Gezer.
+All rights reserved.
+
+This software, including its source code, configuration, models,
+documentation, and accompanying materials (collectively, the "Software"),
+was developed as the Capstone Project of the Software Engineering
+Department at Istinye University, under the supervision of
+Assoc. Prof. Dr. Bahman.
+
+PERMITTED USES
+--------------
+
+Subject to the conditions below, you are permitted to:
+
+  1. View and read the source code for the purpose of academic review,
+     personal study, or evaluation of the authors' work.
+  2. Cite the Software in academic publications, technical reports,
+     or theses, provided that proper attribution is given. Recommended
+     citation format is supplied in `CITATION.cff`.
+
+PROHIBITED USES
+---------------
+
+Without prior written consent from the authors, you may not:
+
+  1. Reproduce, distribute, sublicense, or sell the Software, in whole
+     or in part, in source or compiled form.
+  2. Modify the Software or create derivative works based upon it.
+  3. Use the Software, or any part of it, for commercial purposes.
+  4. Use the Software in production systems, including but not limited
+     to elevator control systems, building automation deployments, or
+     any safety-critical application.
+  5. Remove or alter any copyright, attribution, or license notice
+     contained in the Software.
+
+ATTRIBUTION REQUIREMENT
+-----------------------
+
+Any permitted use that involves referencing the Software (e.g.,
+academic citation, comparative study, code review) must include a
+clear acknowledgement of the original authors and Istinye University
+Capstone Project.
+
+DISCLAIMER OF WARRANTY
+----------------------
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+
+LIMITATION OF LIABILITY
+-----------------------
+
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+THIS SOFTWARE IS NOT CERTIFIED FOR DEPLOYMENT IN SAFETY-CRITICAL
+SYSTEMS. IT IS A RESEARCH PROTOTYPE INTENDED FOR ACADEMIC EVALUATION
+ONLY.
+
+CONTACT
+-------
+
+For licensing inquiries, please contact the authors through Istinye
+University, Faculty of Engineering and Natural Sciences, Department
+of Software Engineering.
