@@ -106,6 +106,24 @@ CLASS_AREAS_M2: dict[str, float] = {
     "box": 0.20,
 }
 
+# Average mass (kg) per detected object — used by the energy simulation
+# to compute a per-call cabin load instead of a single fixed average.
+CLASS_WEIGHTS_KG: dict[str, float] = {
+    # EN 81-20:2020 / ISO 8100-1 nominate 75 kg as the rated mass per
+    # passenger; Tukia et al. (2018) use the same value.
+    "person": 75.0,
+    # Empty single stroller mass ≈ 8–12 kg (UPPAbaby Vista 12 kg, Bugaboo
+    # Butterfly 7 kg); typical occupant child ≈ 10–12 kg. Combined mid-range
+    # ≈ 20 kg.
+    "stroller": 20.0,
+    # Cabin baggage IATA limit ≈ 8 kg; checked baggage typically 15–23 kg.
+    # Mixed elevator distribution ≈ 15 kg.
+    "luggage": 15.0,
+    # Average e-commerce parcel ≈ 1–3 kg (Red Stag 2026 benchmark); larger
+    # logistics cartons reach 10 kg. Conservative mean ≈ 5 kg.
+    "box": 5.0,
+}
+
 DEFAULT_CABIN_M2 = 2.24  # 1.4 × 1.6 m — configs/default.yaml
 DEFAULT_AREA_THRESHOLD = 0.90  # area_bypass_ratio — configs/default.yaml
 DEFAULT_CONF_THRESHOLD = 0.25  # tuned for higher person recall
@@ -148,8 +166,11 @@ class ImageDecision:
     pred_box: int
     pred_occupancy_ratio: float
     pred_is_full: bool
-    # Outcome.
-    outcome: str  # 'TP' | 'TN' | 'FP' | 'FN'
+    # Bypass-decision outcome (TP/TN/FP/FN, image-level).
+    outcome: str
+    # Counting-accuracy outcome (independent of the bypass decision).
+    counts_exact_match: bool  # pred counts equal GT counts for ALL classes
+    count_total_error: int  # Σ |pred_c − gt_c| across classes
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -224,6 +245,14 @@ def classify_outcome(gt_full: bool, pred_full: bool) -> str:
     return "FN"
 
 
+def _save_annotated(img_bgr, out_path: Path) -> None:
+    """Save an annotated image, handling non-ASCII paths via PIL."""
+    from PIL import Image
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(img_bgr[..., ::-1]).save(out_path)  # BGR → RGB
+
+
 def predict_image(
     model,
     image_path: Path,
@@ -233,6 +262,8 @@ def predict_image(
     conf_threshold: float,
     head_model=None,
     head_conf_threshold: float = 0.25,
+    save_pred_to: Path | None = None,
+    save_head_pred_to: Path | None = None,
 ) -> tuple[dict[str, int], float, bool]:
     """Run the detector(s) and reduce the result to per-class counts +
     occupancy ratio + bypass decision.
@@ -241,11 +272,17 @@ def predict_image(
       * person count comes from the head detector,
       * stroller / luggage / box come from the four-class model
         (its ``person`` predictions are ignored to avoid double-counting).
+
+    When ``save_pred_to`` is provided, the four-class detector's annotated
+    frame is written there. ``save_head_pred_to`` does the same for the
+    head detector in hybrid mode.
     """
     counts: dict[str, int] = dict.fromkeys(CLASS_NAMES, 0)
     use_hybrid = head_model is not None
 
     result = model.predict(str(image_path), conf=conf_threshold, verbose=False)[0]
+    if save_pred_to is not None:
+        _save_annotated(result.plot(), save_pred_to)
     if result.boxes is not None:
         for box in result.boxes:
             cls_name = result.names[int(box.cls.item())]
@@ -259,6 +296,8 @@ def predict_image(
         head_result = head_model.predict(str(image_path), conf=head_conf_threshold, verbose=False)[
             0
         ]
+        if save_head_pred_to is not None:
+            _save_annotated(head_result.plot(), save_head_pred_to)
         if head_result.boxes is not None:
             counts["person"] = len(head_result.boxes)
 
@@ -279,7 +318,19 @@ class SimulationStats:
     smart_total_j: float = 0.0
     smart_bypassed: int = 0
     smart_accepted: int = 0
+    mean_load_kg: float = 0.0  # average per-call cabin load
     by_outcome: dict[str, int] = field(default_factory=dict)
+
+
+def _cabin_load_kg(d: ImageDecision) -> float:
+    """Per-call cabin load (kg) derived from the GT counts and the
+    literature-anchored mass values in CLASS_WEIGHTS_KG."""
+    return (
+        d.gt_person * CLASS_WEIGHTS_KG["person"]
+        + d.gt_stroller * CLASS_WEIGHTS_KG["stroller"]
+        + d.gt_luggage * CLASS_WEIGHTS_KG["luggage"]
+        + d.gt_box * CLASS_WEIGHTS_KG["box"]
+    )
 
 
 def simulate_calls(
@@ -287,30 +338,41 @@ def simulate_calls(
     *,
     num_calls: int,
     avg_floors_per_trip: float,
-    avg_passengers_per_call: float,
     energy_params: EnergyParams,
     seed: int = 42,
 ) -> SimulationStats:
+    """Sample ``num_calls`` synthetic hall calls and tally energy.
+
+    Each call draws a labeled cabin state uniformly at random from the
+    benchmark. The energy cost of accepting that call is computed from
+    the *actual* cabin load (people + strollers + luggage + boxes), not
+    from a fixed average — so heavier cabins cost proportionally more
+    motor energy per stop. Both policies use the same per-call energy
+    when they accept; the only difference is which calls each policy
+    bypasses.
+    """
     rng = random.Random(seed)
     stats = SimulationStats(num_calls=num_calls)
+    floors = max(1, round(avg_floors_per_trip))
 
-    avg_passenger_kg = avg_passengers_per_call * 75.0
-    base_profile = StartProfile(
-        load_kg=avg_passenger_kg,
-        floors_traveled=max(1, round(avg_floors_per_trip)),
-        direction_up=True,
-    )
-    energy_per_stop = estimate_stop_energy(base_profile, energy_params)["total_j"]
-
+    total_load_kg = 0.0
     for _ in range(num_calls):
         d = rng.choice(decisions)
-        stats.baseline_total_j += energy_per_stop
+        load_kg = _cabin_load_kg(d)
+        total_load_kg += load_kg
+        e_stop = estimate_stop_energy(
+            StartProfile(load_kg=load_kg, floors_traveled=floors, direction_up=True),
+            energy_params,
+        )["total_j"]
+        stats.baseline_total_j += e_stop
         if d.pred_is_full:
             stats.smart_bypassed += 1
         else:
-            stats.smart_total_j += energy_per_stop
+            stats.smart_total_j += e_stop
             stats.smart_accepted += 1
         stats.by_outcome[d.outcome] = stats.by_outcome.get(d.outcome, 0) + 1
+
+    stats.mean_load_kg = total_load_kg / max(1, num_calls)
     return stats
 
 
@@ -413,6 +475,8 @@ def write_per_image_csv(decisions: list[ImageDecision], out_path: Path) -> None:
                 "pred_is_full",
                 "pred_occupancy_ratio",
                 "outcome",
+                "counts_exact_match",
+                "count_total_error",
             ]
         )
         for d in decisions:
@@ -432,6 +496,8 @@ def write_per_image_csv(decisions: list[ImageDecision], out_path: Path) -> None:
                     d.pred_is_full,
                     f"{d.pred_occupancy_ratio:.4f}",
                     d.outcome,
+                    d.counts_exact_match,
+                    d.count_total_error,
                 ]
             )
 
@@ -498,20 +564,58 @@ def write_markdown_report(
     lines.append(f"- Confidence threshold: {args.conf_threshold:.2f}")
     lines.append(f"- Area bypass threshold: {args.area_threshold:.2f}")
     lines.append(f"- Synthetic hall calls: **{args.num_calls}**")
-    lines.append(f"- Avg passengers per accepted call: {args.avg_passengers}")
     lines.append(f"- Avg floors per trip: {args.avg_floors}")
+    lines.append(f"- Mean per-call cabin load (dynamic): **{stats.mean_load_kg:.0f} kg**")
+    lines.append("")
+    lines.append("### Per-class object masses (literature-anchored)\n")
+    lines.append("| Class | Mass (kg) | Source |")
+    lines.append("|---|:---:|---|")
+    lines.append("| person   | 75 | EN 81-20:2020 / ISO 8100-1 rated mass per passenger |")
+    lines.append(
+        "| stroller | 20 | Empty single stroller 7-12 kg + child 10-12 kg "
+        "(EN 1888-1:2018 + product survey) |"
+    )
+    lines.append(
+        "| luggage  | 15 | Cabin baggage IATA limit ~8 kg, "
+        "checked baggage 15-23 kg; mixed mean ~15 kg |"
+    )
+    lines.append(
+        "| box      |  5 | E-commerce parcel mean 1-3 kg; "
+        "logistics carton up to 10 kg (Red Stag 2026) |"
+    )
     lines.append("")
 
-    lines.append("## Bypass-decision performance (image-level)\n")
+    lines.append("## Accuracy 1 — Bypass decision (image-level)\n")
+    lines.append("How often the system makes the correct accept / bypass call.\n")
     lines.append("|  | Predicted: not full | Predicted: full |")
     lines.append("|---|:---:|:---:|")
     lines.append(f"| **GT: not full** | {metrics['tn']} (TN) | {metrics['fp']} (FP) |")
     lines.append(f"| **GT: full**     | {metrics['fn']} (FN) | {metrics['tp']} (TP) |")
     lines.append("")
-    lines.append(f"- Accuracy: **{metrics['accuracy']:.3f}**")
-    lines.append(f"- Bypass precision: **{metrics['precision']:.3f}**")
-    lines.append(f"- Bypass recall:    **{metrics['recall']:.3f}**")
-    lines.append(f"- F1 score:         **{metrics['f1']:.3f}**")
+    lines.append(f"- **Bypass accuracy**:  {metrics['accuracy']:.3f}")
+    lines.append(f"- Bypass precision:    {metrics['precision']:.3f}")
+    lines.append(f"- Bypass recall:       {metrics['recall']:.3f}")
+    lines.append(f"- F1 score:            {metrics['f1']:.3f}")
+    lines.append("")
+
+    # Counting accuracy — independent of the bypass decision.
+    n = len(decisions)
+    n_exact = sum(1 for d in decisions if d.counts_exact_match)
+    counting_acc = n_exact / max(1, n)
+    total_count_err = sum(d.count_total_error for d in decisions)
+    mean_total_err = total_count_err / max(1, n)
+    lines.append("## Accuracy 2 — Counting (per-image, independent metric)\n")
+    lines.append(
+        "How often the per-class detection counts exactly match the ground "
+        "truth. A bypass decision can be correct while counts are wrong, "
+        "so this number is reported separately to verify that the model is "
+        "right for the right reasons.\n"
+    )
+    lines.append(
+        f"- **Counting accuracy** (exact-match): {counting_acc:.3f}  ({n_exact}/{n} images)"
+    )
+    lines.append(f"- Mean total count error per image:   {mean_total_err:.2f} objects")
+    lines.append(f"- Total count error across all images: {total_count_err}")
     lines.append("")
 
     lines.append("## Per-class detection accuracy\n")
@@ -583,9 +687,16 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--conf-threshold", type=float, default=DEFAULT_CONF_THRESHOLD)
     p.add_argument("--num-calls", type=int, default=1000)
     p.add_argument("--avg-floors", type=float, default=3.0)
-    p.add_argument("--avg-passengers", type=float, default=4.0)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--output", type=Path, default=Path("results/simulation"))
+    p.add_argument(
+        "--no-save-annotated",
+        dest="save_annotated",
+        action="store_false",
+        help="Disable per-image annotated prediction snapshots "
+        "(by default they are written to <output>/predictions/).",
+    )
+    p.set_defaults(save_annotated=True)
     return p.parse_args()
 
 
@@ -625,11 +736,17 @@ def main() -> int:
     decisions: list[ImageDecision] = []
     mode_label = "hybrid" if head_model is not None else "single-model"
     print(f"[info] scoring {len(gt_rows)} images (mode={mode_label}, conf={args.conf_threshold}) …")
+    pred_dir = args.output / "predictions" if args.save_annotated else None
+    head_pred_dir = (
+        args.output / "predictions_head" if args.save_annotated and head_model is not None else None
+    )
     for gt in gt_rows:
         img_path = args.images / gt.filename
         if not img_path.exists():
             print(f"  [warn] missing image: {img_path}")
             continue
+        save_pred_to = (pred_dir / gt.filename) if pred_dir is not None else None
+        save_head_pred_to = (head_pred_dir / gt.filename) if head_pred_dir is not None else None
         pred_counts, pred_occ, pred_full = predict_image(
             model,
             img_path,
@@ -638,8 +755,18 @@ def main() -> int:
             conf_threshold=args.conf_threshold,
             head_model=head_model,
             head_conf_threshold=args.head_conf,
+            save_pred_to=save_pred_to,
+            save_head_pred_to=save_head_pred_to,
         )
         outcome = classify_outcome(gt.gt_is_full, pred_full)
+        gt_counts = {
+            "person": gt.gt_person,
+            "stroller": gt.gt_stroller,
+            "luggage": gt.gt_luggage,
+            "box": gt.gt_box,
+        }
+        count_total_error = sum(abs(pred_counts[c] - gt_counts[c]) for c in CLASS_NAMES)
+        counts_exact_match = count_total_error == 0
         decisions.append(
             ImageDecision(
                 filename=gt.filename,
@@ -656,6 +783,8 @@ def main() -> int:
                 pred_occupancy_ratio=pred_occ,
                 pred_is_full=pred_full,
                 outcome=outcome,
+                counts_exact_match=counts_exact_match,
+                count_total_error=count_total_error,
             )
         )
         print(
@@ -679,7 +808,6 @@ def main() -> int:
         decisions,
         num_calls=args.num_calls,
         avg_floors_per_trip=args.avg_floors,
-        avg_passengers_per_call=args.avg_passengers,
         energy_params=energy_params,
         seed=args.seed,
     )
@@ -703,10 +831,18 @@ def main() -> int:
     print(f"Mode:             {mode_label}")
     print(f"Images scored:    {len(decisions)}")
     print(
-        f"Bypass decision:  TP={metrics['tp']} TN={metrics['tn']} "
-        f"FP={metrics['fp']} FN={metrics['fn']}  "
-        f"acc={metrics['accuracy']:.3f}  P={metrics['precision']:.3f}  "
-        f"R={metrics['recall']:.3f}  F1={metrics['f1']:.3f}"
+        f"Bypass accuracy:  {metrics['accuracy']:.3f}  "
+        f"(TP={metrics['tp']} TN={metrics['tn']} "
+        f"FP={metrics['fp']} FN={metrics['fn']}; "
+        f"P={metrics['precision']:.3f} R={metrics['recall']:.3f} "
+        f"F1={metrics['f1']:.3f})"
+    )
+    n_exact = sum(1 for d in decisions if d.counts_exact_match)
+    total_count_err = sum(d.count_total_error for d in decisions)
+    print(
+        f"Counting accuracy: {n_exact / max(1, len(decisions)):.3f}  "
+        f"({n_exact}/{len(decisions)} images with exact per-class match; "
+        f"total count error = {total_count_err} objects)"
     )
     print("Per-class MAE (count error):")
     for cls in CLASS_NAMES:
