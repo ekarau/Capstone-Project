@@ -1,0 +1,9 @@
+metric,value
+num_calls,1000
+baseline_total_kj,3453.86
+smart_total_kj,1723.48
+energy_saved_kj,1730.39
+energy_saved_kwh,0.4807
+energy_saved_pct,50.10
+smart_bypassed_calls,501
+smart_accepted_calls,499

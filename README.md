@@ -1,163 +1,207 @@
 # Smart Elevator CV
 
-> **Computer-vision-based occupancy sensing and bypass control for energy-efficient elevators.**
-> A four-class YOLOv8 detector estimates how full an elevator cabin is from a single CCTV frame, and an EN-81-20-grounded area model decides whether incoming hall calls should be served or skipped.
+Computer-vision system that estimates how full an elevator cabin is from a single CCTV frame, then decides whether the next hall call should be served or skipped to save energy.
 
 | | |
 |---|---|
-| **Authors**       | Ege Karaurgan · Vedat Efe Gezer |
-| **Advisor**       | Assoc. Prof. Dr. Bahman |
-| **Institution**   | Istinye University — Department of Software Engineering |
-| **Project type**  | Capstone project (research prototype) |
-| **License**       | Proprietary — see [`LICENSE`](LICENSE) |
+| Authors | Ege Karaurgan, Vedat Efe Gezer |
+| Advisor | Assoc. Prof. Dr. Bahman |
+| Institution | Istinye University, Department of Software Engineering |
+| Project | Capstone (research prototype) |
+| License | Proprietary, see [`LICENSE`](LICENSE) |
 
----
+## Why
 
-## What this project does
+Most elevators only listen to the weight sensor. A cabin can already be unusable (people pressed against the door, a stroller blocking the entrance) long before the load cell reaches its limit, so the elevator keeps stopping at floors where nobody can actually fit. The result is wasted travel, longer wait times for everyone else, and avoidable energy use.
 
-Conventional elevator controllers stop at every hall call until the **weight sensor** says the cabin is full. That decision is too late: a cabin can be physically saturated (people standing shoulder-to-shoulder, a stroller blocking the door) long before the load cell trips. Smart Elevator CV adds a second signal — **visual floor occupancy** — and skips ("bypasses") calls when the cabin no longer has usable area, even if it is below the weight limit.
+We add a second signal: **what the camera sees**. If the floor is too full, the controller bypasses the call instead of pretending there is room.
 
-The end-to-end pipeline is:
+## How it works
 
 ```
-CCTV frame ──► YOLOv8 detector ──► per-class footprint area ──► occupancy ratio ──► bypass decision
-                (person, stroller,    (TS EN 81-20 / ISO 8100      (Σ aᵢ / A_cabin)        (PDF Algorithm 1)
-                 luggage, box)         standard footprints)
+CCTV frame
+    │
+    ├──► YOLOv8 four-class detector ──► persons, strollers, luggage, boxes
+    │
+    └──► YOLOv8 head detector       ──► person count (occlusion-resilient)
+                │
+                ▼
+       per-class footprint area  (TS EN 81-20 standard footprints)
+                │
+                ▼
+         occupancy ratio  ρ = A_occupied / A_cabin
+                │
+                ▼
+          two-stage decision
+       (weight gate + area gate)
+                │
+                ▼
+        ACCEPT / BYPASS / BYPASS
 ```
 
-## Methodology in one minute
+### Detection
 
-**Detection.** A YOLOv8-s model is fine-tuned on a unified four-class dataset (≈ 13 k training images, leakage-free split) covering persons, strollers, luggage, and boxes inside lifts.
+Two detectors run in parallel:
 
-**Occupancy estimation.** Because elevator CCTV is mounted in a top corner with a fish-eye lens, only heads and upper bodies are visible — full-body bounding boxes are physically impossible. We therefore use a **class-based footprint model**:
+* A **four-class** YOLOv8s recognises *person*, *stroller*, *luggage*, *box*. Trained on a unified dataset of about 13 000 cabin images merged from ten public sources, with a leakage-safe split that keeps frames from the same video out of train/val/test.
+* A **head-only** YOLOv8s focuses on heads in top-down camera angles. Trained on the OverHead Head Detection corpus (~6 000 images), specifically because heads stay visible in crowded cabins where bodies overlap.
+
+In *hybrid* mode the head model supplies the person count, and the four-class model provides the non-human classes. The 4-class model's `person` predictions are deliberately discarded to avoid double-counting.
+
+### Occupancy
+
+We do not need pixel-perfect bounding boxes for the floor area calculation, just per-class counts:
 
 $$
-A_\mathrm{occupied} = \sum_{c \in \mathcal{C}} n_c \cdot \bar{a}_c, \qquad \rho = \min\!\left(\frac{A_\mathrm{occupied}}{A_\mathrm{cabin}},\; 1\right)
+A_{\text{occupied}} = \sum_{c} n_c \cdot \bar{a}_c, \qquad \rho = \min\!\left(\frac{A_{\text{occupied}}}{A_{\text{cabin}}},\ 1\right)
 $$
 
-where $n_c$ is the number of detections of class $c$ and $\bar{a}_c$ is the standard floor area for that class:
+with class footprints taken from the lift industry standard:
 
-| Class    | $\bar{a}_c$ (m²) | Source |
+| Class    | Footprint $\bar{a}_c$ (m²) | Source |
 |----------|:---:|---|
-| person   | 0.20 | TS EN 81-20:2020 §5.4.2.1.1 — "available car area per person" |
-| stroller | 0.45 | Typical single-stroller footprint (~ 90 × 50 cm) |
-| luggage  | 0.18 | IATA cabin / medium check-in mix |
-| box      | 0.20 | Medium e-commerce / logistics carton (~ 50 × 40 cm) |
+| person   | 0.20 | TS EN 81-20:2020 §5.4.2.1.1 — available car area per person |
+| stroller | 0.45 | Typical single stroller, ~ 90 × 50 cm |
+| luggage  | 0.18 | IATA cabin / mid-size check-in mix |
+| box      | 0.20 | Medium e-commerce or logistics carton, ~ 50 × 40 cm |
 
-**Control.** A two-stage policy combines weight and area (PDF Algorithm 1, after Andrei & Ruokokoski, 2022):
+This is the simplest defensible model: it ignores object positions, but the constants come straight from accessibility codes used in real elevator design, so the numbers transfer cleanly into the thesis.
 
-1. If $W \ge \tau_W \cdot W_\mathrm{rated}$ → **bypass (weight)**.
-2. Else, if $\rho \ge \tau_A$ → **bypass (area)**.
-3. Otherwise → **accept**.
+### Decision
 
-Defaults: $\tau_W = 0.80$, $\tau_A = 0.90$.
+A two-stage gate, in this order:
 
-**Energy.** A power model after Tukia et al. (2018) translates "stops avoided" into kWh saved relative to a weight-only baseline.
+1. If the load cell reports $W \ge \tau_W \cdot W_{\text{rated}}$, bypass on weight.
+2. Else if visual occupancy $\rho \ge \tau_A$, bypass on area.
+3. Otherwise, accept the call.
+
+Defaults: $\tau_W = 0.80$, $\tau_A = 0.90$. The weight gate runs first so the cheap load reading short-circuits the more expensive vision pipeline whenever it can.
+
+### Energy
+
+A power model after Tukia et al. (2018) converts every avoided stop into joules saved. Each accepted call costs running energy (motor + counterweight), door-cycle energy, and a fixed stop-idle term. Bypassing the call saves all of it.
+
+## Results
+
+Two configurations were measured on a curated set of 29 cabin photographs covering empty, mixed, and at-capacity scenarios. Each photo carries multi-class ground truth (`gt_person`, `gt_stroller`, `gt_luggage`, `gt_box`). 1 000 synthetic hall calls were sampled uniformly from this set.
+
+| Configuration | Bypass acc. | Precision | Recall | F1 | Person MAE | **Energy saved** |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| Baseline (4-class only)   | 0.828 | 0.667 | 0.750 | 0.706 | 1.38 | 29.4 % |
+| **Hybrid (+ head model)** | 0.759 | 0.533 | **1.000** | 0.696 | **1.21** | **50.1 %** |
+| Δ                         | −0.07 | −0.13 | +0.25 | ≈ 0 | −0.17 | **+20.7 pp** |
+
+The hybrid configuration trades a small precision loss for **perfect recall** (no full cabin is ever missed) and roughly doubles the energy savings. False positives in hybrid mode trace back to the head detector slightly over-counting (≈ 2–3 phantom heads per frame) on AI-rendered images that contain head-shaped artefacts. Tightening `head_conf_threshold` (default 0.25) is documented as future tuning work.
+
+Detection metrics for the underlying models on their own validation splits:
+
+| Model | Precision | Recall | mAP\@50 | mAP\@50–95 |
+|---|:---:|:---:|:---:|:---:|
+| 4-class (best_v2.pt)  | 0.953 | 0.822 | 0.877 | 0.667 |
+| Head (best_head.pt)   | 0.852 | 0.692 | 0.767 | 0.519 |
 
 ## Repository layout
 
 ```
-configs/                YAML configuration (cabin dimensions, thresholds, model)
-data/
-  raw/                  Source datasets (Roboflow downloads, untouched) — gitignored
-  unified/              Merged YOLO dataset (train/val/test) — generated, gitignored
+configs/      YAML for cabin geometry, thresholds, model hyper-parameters
+data/         raw downloads (gitignored), unified YOLO dataset, simulation set
+demo/         Streamlit UI — single-frame analysis + batch simulation viewer
+notebooks/    Colab-ready notebooks: dataset audit, training, head training, demos
 src/
-  dataset/              Audit, unification, and augmentation of source datasets
-  detection/            YOLOv8 training & inference wrappers
-  perception/           Homography, bird's-eye view, and three occupancy estimators
-  energy/               Tukia (2018) power-consumption model
-  control/              PDF Algorithm 1 (weight + area bypass decision)
-  simulation/           Baseline-vs-Smart synthetic comparison
-  utils/                Logging, config loader, calibration helpers
-notebooks/              Reproducible Colab notebooks (audit, train, demo, energy)
-scripts/                Developer CLI entry points (dataset prep, packaging, demo)
-tools/                  Manual calibration helpers (e.g. cabin-corner picker)
-tests/                  Smoke tests for each module
-models/weights/         Trained weights — gitignored (download separately)
-results/                Generated figures, metrics, CSVs — partly gitignored
+  dataset/    audit, unification, augmentation
+  detection/  YOLOv8 wrappers (training + inference)
+  perception/ homography, BEV, three occupancy estimators
+  energy/     Tukia 2018 power model
+  control/    two-stage hall-call decision
+  simulation/ baseline-vs-smart synthetic comparison
+  utils/      logging, config loader, calibration helpers
+scripts/      command-line entry points (dataset prep, packaging, demo, sim)
+tests/        smoke tests for each module
+tools/        manual calibration helpers
+models/weights/  trained checkpoints (gitignored — distributed separately)
+results/      generated figures, CSVs, simulation reports
 ```
 
 ## Quick start
 
-> Tested on Python 3.10 – 3.12, Windows 11 / Ubuntu 22.04.
+Tested on Python 3.10–3.12, Windows 11 and Ubuntu 22.04.
 
 ```bash
-# 1. Clone and create a virtual environment
 git clone git@github.com:ekarau/Capstone-Project.git
 cd Capstone-Project
 python -m venv venv
-source venv/bin/activate                # Windows: venv\Scripts\activate
+source venv/bin/activate            # Windows: venv\Scripts\activate
 pip install -e ".[dev]"
 
-# 2. Prepare the unified YOLO dataset (class remap + leakage-free split)
+# Build the unified four-class dataset from raw downloads
 python -m scripts.prepare_dataset --raw data/raw --out data/unified
 
-# 3. Train — Colab strongly recommended (notebooks/02_train.ipynb)
+# Train (Colab notebooks/02_train.ipynb is much faster than CPU)
 python -m src.detection.train --data data/unified/data.yaml --preset balanced
 
-# 4. Run the end-to-end demo on a single image
-python -m scripts.demo \
-    --image path/to/cabin.jpg \
-    --weights models/weights/best.pt
+# Single-image demo
+python -m scripts.demo --image path/to/cabin.jpg --weights models/weights/best.pt
 ```
 
-A pretrained checkpoint (`best.pt`, ≈ 22 MB) is distributed separately;
-contact the authors for access.
+Pretrained `best.pt` and `best_head.pt` (~22 MB each) are distributed
+on request — contact the authors.
 
-### Cabin dimension override
+### Reproducing the energy simulation
 
 ```bash
-python -m scripts.demo --image cabin.jpg \
-    --cabin-width 1.4 --cabin-depth 1.6 --max-weight 630
+# Baseline — four-class detector only
+python -m scripts.run_simulation \
+    --images data/sim/images \
+    --ground-truth data/sim/ground_truth.csv \
+    --weights models/weights/best.pt \
+    --rated-capacity 8 \
+    --num-calls 1000 \
+    --output results/simulation/baseline
+
+# Hybrid — adds the head detector for the person count
+python -m scripts.run_simulation \
+    --images data/sim/images \
+    --ground-truth data/sim/ground_truth.csv \
+    --weights models/weights/best.pt \
+    --head-weights models/weights/best_head.pt \
+    --rated-capacity 8 \
+    --num-calls 1000 \
+    --output results/simulation/hybrid
 ```
 
-Or via YAML:
+Both runs write a confusion matrix PNG, per-image and per-class CSVs,
+and a Markdown summary report.
+
+### Streamlit demo
 
 ```bash
-python -m scripts.demo --image cabin.jpg --config configs/my_cabin.yaml
+pip install -e ".[demo]"
+streamlit run demo/app.py
 ```
 
-## Reproducing the trained model
+Two tabs: *Single Frame* (upload a cabin photo, sweep the thresholds,
+read off the decision) and *Batch Simulation* (auto-loads whatever
+`results/simulation/` has produced).
 
-The recommended path is the Colab notebook, which packages the dataset and code into two ZIPs and runs an end-to-end train + evaluate + occupancy-report flow on a free L4 GPU (≈ 3.7 hours for 81 epochs):
+## Limitations
 
-1. Locally: `python -m scripts.package_for_colab` → produces `code.zip` and `dataset.zip` under `Desktop/colab_upload/`.
-2. Upload both to `Google Drive / MyDrive / Capstone /`.
-3. Open `notebooks/02_train.ipynb` in Colab and run all cells.
-
-## Results (v0.2.0, model `best_v2.pt`)
-
-Held-out test set (367 images, sourced primarily from `Elevator.yolov8` plus sliced contributions from other corpora — never seen during training):
-
-| Class    | Precision | Recall | mAP\@50 | mAP\@50–95 |
-|----------|:---:|:---:|:---:|:---:|
-| **all**      | 0.953 | 0.822 | **0.877** | 0.667 |
-| person   | 0.945 | 0.626 | 0.736 | 0.451 |
-| stroller | 0.966 | 0.972 | 0.982 | 0.832 |
-| luggage  | 0.960 | 0.839 | 0.887 | 0.689 |
-| box      | 0.940 | 0.850 | 0.904 | 0.695 |
-
-Occupancy distribution on the test set (class-based estimator, $A_\mathrm{cabin} = 2.24\,\mathrm{m^2}$): mean **26.6 %**, median **29.0 %**, max **62.5 %**.
-
-## Limitations and future work
-
-- **Person recall on out-of-distribution footage drops to 0.63.** Mitigations: per-class confidence-threshold tuning, more diverse elevator footage in training, test-time augmentation.
-- **The class-based footprint estimator cannot tell whether two people overlap** — it always sums $\bar{a}_c$. A more accurate alternative is the homography-based union-of-disks (`FootprintOccupancy`) or the rasterized BEV mask (`BEVMaskOccupancy`); both are implemented in `src/perception/occupancy.py` and only require the four cabin corners to be calibrated.
-- **Pose estimation.** With an additional ceiling camera, YOLOv8-pose could replace bounding-box approximations with body silhouettes.
-- **Tracking.** Multi-frame tracking (BoT-SORT / ByteTrack) would prevent over-counting when the same person is detected across frames.
+* **Synthetic test set.** The 29 cabin images used in the simulation are AI-generated. They cover the full occupancy spectrum, but they are not real CCTV footage — domain gap to a deployed camera should be expected. Re-running the same protocol on real footage from a target building is the natural next step.
+* **No homography.** The class-footprint occupancy model ignores where each object sits on the floor. When two passengers stand shoulder-to-shoulder, the model still adds the full 0.20 m² twice. The repository ships `FootprintOccupancy` and `BEVMaskOccupancy` (`src/perception/occupancy.py`) for the homography-based alternative — both only need four manually clicked floor corners per cabin.
+* **Hybrid over-counting.** The head detector adds ~ 2–3 phantom heads per AI-generated image, dragging hybrid precision to 0.53. Lifting `head_conf_threshold` from 0.25 toward 0.40 should recover most of the lost precision; this is left as a tuning study.
+* **Single-frame inference.** Multi-frame tracking (BoT-SORT, ByteTrack) would prevent the same passenger from being counted on consecutive frames if the system is later wired to a video stream.
 
 ## References
 
 1. **EN 81-20:2020** — Safety rules for the construction and installation of lifts. European Committee for Standardization.
-2. **Tukia, T. et al. (2018)** — High-resolution modeling of elevator power consumption. *Journal of Building Engineering*.
-3. **Andrei, A. & Ruokokoski, J. (2022)** — Load-area-based elevator group control with computer-vision occupancy sensing.
-4. **Mohamudally, N. et al. (2015)** — Floor occupancy estimation in smart buildings.
+2. **Tukia, T. et al. (2018)** — High-resolution modelling of elevator power consumption. *Journal of Building Engineering*.
+3. **Andrei, A. & Ruokokoski, J. (2022)** — Load- and area-based elevator group control with computer-vision occupancy sensing.
+4. **Shao, S. et al. (2018)** — CrowdHuman: a benchmark for detecting human in a crowd. arXiv:1805.00123.
+5. **Mohamudally, N. et al. (2015)** — Floor occupancy estimation in smart buildings.
 
 ## Citation
 
-If you reference this work in academic publications, please use the metadata in [`CITATION.cff`](CITATION.cff).
+For academic citation, use the metadata in [`CITATION.cff`](CITATION.cff).
 
 ## License
 
-This project is **proprietary**. See [`LICENSE`](LICENSE) for the full terms.
-Briefly: viewing and academic citation are permitted; reproduction, modification, redistribution, commercial use, and deployment in any safety-critical system are not.
+Proprietary. Viewing and citation are permitted; reproduction, modification, redistribution, commercial use, and deployment in any safety-critical system are not. Full terms in [`LICENSE`](LICENSE).

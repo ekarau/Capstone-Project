@@ -33,6 +33,8 @@ venv.bak/
 data/raw/
 data/unified/
 data/eval/
+# Keep data/sim/ tracked (small curated set, GT labels) but not its images dir
+data/sim/images/
 *.zip
 *.tar.gz
 

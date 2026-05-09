@@ -178,21 +178,80 @@ def run_analysis(
 # ──────────────────────────────────────────────────────────────────────
 
 
-def main() -> None:
-    st.set_page_config(
-        page_title="Smart Elevator CV",
-        page_icon="🛗",
-        layout="wide",
-    )
+SIM_RESULTS_DIR = ROOT / "results" / "simulation"
 
-    st.title("🛗 Smart Elevator CV — Live Demo")
+
+def render_batch_tab() -> None:
+    """Read and display the latest simulation outputs produced by
+    ``python -m scripts.run_simulation``."""
+    st.subheader("Batch Energy Simulation")
     st.markdown(
-        "Upload a CCTV frame from an elevator cabin. The system detects "
-        "people, strollers, luggage, and boxes; estimates floor occupancy "
-        "with TS EN 81-20 standard footprints; and decides whether the next "
-        "hall call should be **accepted** or **bypassed**."
+        "Aggregate results from the curated ground-truth set in "
+        "`data/sim/`, scored with the trained detector and aggregated "
+        "over a synthetic stream of hall calls. See "
+        "`scripts/run_simulation.py` for the pipeline."
     )
 
+    cm_png = SIM_RESULTS_DIR / "confusion_matrix.png"
+    csv_per = SIM_RESULTS_DIR / "per_image_decisions.csv"
+    csv_eng = SIM_RESULTS_DIR / "energy_savings.csv"
+    md_rep = SIM_RESULTS_DIR / "report.md"
+
+    if not csv_eng.exists():
+        st.warning(
+            "No simulation outputs found yet. Place 20-30 cabin photos in "
+            "`data/sim/images/`, fill `data/sim/ground_truth.csv`, then run:\n\n"
+            "```\npython -m scripts.run_simulation \\\n"
+            "    --images data/sim/images \\\n"
+            "    --ground-truth data/sim/ground_truth.csv \\\n"
+            "    --weights models/weights/best.pt \\\n"
+            "    --rated-capacity 8\n```"
+        )
+        return
+
+    # Energy savings summary.
+    energy: dict[str, str] = {}
+    with open(csv_eng, encoding="utf-8") as f:
+        for row in f.read().splitlines()[1:]:
+            if "," in row:
+                k, v = row.split(",", 1)
+                energy[k.strip()] = v.strip()
+
+    st.markdown("### Energy aggregates")
+    c1, c2, c3 = st.columns(3)
+    c1.metric(
+        "Energy saved",
+        f"{float(energy.get('energy_saved_kj', 0)):.1f} kJ",
+        f"{energy.get('energy_saved_pct', '0')} %",
+    )
+    c2.metric("Saved (kWh)", energy.get("energy_saved_kwh", "—"))
+    c3.metric(
+        "Smart bypassed",
+        energy.get("smart_bypassed_calls", "—"),
+        f"of {energy.get('num_calls', '—')} calls",
+    )
+
+    if cm_png.exists():
+        st.markdown("### Per-image confusion matrix")
+        st.image(str(cm_png), width=420)
+
+    if csv_per.exists():
+        st.markdown("### Per-image decisions")
+        try:
+            import pandas as pd
+
+            df = pd.read_csv(csv_per)
+            st.dataframe(df, use_container_width=True, hide_index=True)
+        except ImportError:
+            st.code(csv_per.read_text(encoding="utf-8"))
+
+    if md_rep.exists():
+        with st.expander("Full Markdown report"):
+            st.markdown(md_rep.read_text(encoding="utf-8"))
+
+
+def render_single_frame_tab() -> None:
+    """Single-image detection + decision (the original demo screen)."""
     # ─── Sidebar ──────────────────────────────────────────────────────
     with st.sidebar:
         st.header("Cabin geometry")
@@ -338,6 +397,27 @@ def main() -> None:
             result.occupancy_ratio,
             text=f"Floor occupancy: {result.occupancy_ratio * 100:.1f}%",
         )
+
+
+def main() -> None:
+    st.set_page_config(
+        page_title="Smart Elevator CV",
+        page_icon="🛗",
+        layout="wide",
+    )
+    st.title("🛗 Smart Elevator CV — Live Demo")
+    st.markdown(
+        "Upload a CCTV frame from an elevator cabin. The system detects "
+        "people, strollers, luggage, and boxes; estimates floor occupancy "
+        "with TS EN 81-20 standard footprints; and decides whether the next "
+        "hall call should be **accepted** or **bypassed**."
+    )
+
+    tab_single, tab_batch = st.tabs(["Single Frame", "Batch Simulation"])
+    with tab_single:
+        render_single_frame_tab()
+    with tab_batch:
+        render_batch_tab()
 
     # ─── Footer ──────────────────────────────────────────────────────
     st.markdown("---")
