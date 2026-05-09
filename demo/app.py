@@ -182,6 +182,42 @@ SIM_RESULTS_ROOT = ROOT / "results" / "simulation"
 SIM_IMAGES_DIR = ROOT / "data" / "sim" / "images"
 SIM_GT_CSV = ROOT / "data" / "sim" / "ground_truth.csv"
 
+OUTCOME_BADGES = {
+    "TP": "✅ correct bypass",
+    "TN": "✅ correct accept",
+    "FP": "⚠ wrong bypass",
+    "FN": "❌ missed bypass",
+}
+
+
+def _friendlify_per_image_df(df):
+    """Turn the raw CSV columns into reader-friendly labels."""
+    rename = {
+        "filename": "Image",
+        "gt_person": "👤 GT",
+        "gt_stroller": "🚼 GT",
+        "gt_luggage": "🧳 GT",
+        "gt_box": "📦 GT",
+        "gt_is_full": "GT full?",
+        "gt_occupancy_ratio": "GT occ.",
+        "pred_person": "👤 pred",
+        "pred_stroller": "🚼 pred",
+        "pred_luggage": "🧳 pred",
+        "pred_box": "📦 pred",
+        "pred_is_full": "Pred full?",
+        "pred_occupancy_ratio": "Pred occ.",
+        "outcome": "Decision",
+        "counts_exact_match": "Counts ✓?",
+        "count_total_error": "Count err.",
+    }
+    out = df.rename(columns=rename).copy()
+    if "Decision" in out:
+        out["Decision"] = out["Decision"].map(lambda v: OUTCOME_BADGES.get(v, v))
+    for col in ("GT full?", "Pred full?", "Counts ✓?"):
+        if col in out:
+            out[col] = out[col].map(lambda v: "✅" if str(v).lower() == "true" else "❌")
+    return out
+
 
 def _list_run_dirs() -> list[str]:
     """Return existing simulation run sub-directory names, newest first."""
@@ -211,6 +247,8 @@ def _run_simulation(
     cls_conf: float,
     rated_capacity: int,
     num_calls: int,
+    cabin_m2: float,
+    area_threshold: float,
 ) -> tuple[bool, str]:
     """Invoke scripts.run_simulation as a subprocess. Returns (ok, stdout)."""
     import subprocess
@@ -234,6 +272,10 @@ def _run_simulation(
         str(rated_capacity),
         "--num-calls",
         str(num_calls),
+        "--cabin-m2",
+        f"{cabin_m2:.4f}",
+        "--area-threshold",
+        f"{area_threshold:.2f}",
         "--output",
         str(SIM_RESULTS_ROOT / run_name),
     ]
@@ -311,32 +353,60 @@ def _render_image_gallery(run_dir: Path) -> None:
             cols[2].image(str(head_pred), caption="Head detector", use_container_width=True)
 
         if meta:
-            gt = (
-                f"GT counts: person={meta.get('gt_person')}  "
-                f"stroller={meta.get('gt_stroller')}  "
-                f"luggage={meta.get('gt_luggage')}  box={meta.get('gt_box')}"
+
+            def _fmt(cls_emoji: str, gt_v, pr_v) -> str:
+                check = "✅" if str(gt_v) == str(pr_v) else "❌"
+                return f"{cls_emoji} {gt_v} → {pr_v} {check}"
+
+            count_line = "  ·  ".join(
+                [
+                    _fmt("👤", meta.get("gt_person"), meta.get("pred_person")),
+                    _fmt("🚼", meta.get("gt_stroller"), meta.get("pred_stroller")),
+                    _fmt("🧳", meta.get("gt_luggage"), meta.get("pred_luggage")),
+                    _fmt("📦", meta.get("gt_box"), meta.get("pred_box")),
+                ]
             )
-            pred = (
-                f"Pred counts: person={meta.get('pred_person')}  "
-                f"stroller={meta.get('pred_stroller')}  "
-                f"luggage={meta.get('pred_luggage')}  box={meta.get('pred_box')}"
-            )
+            decision_badge = OUTCOME_BADGES.get(meta.get("outcome", ""), meta.get("outcome", ""))
+            counts_match = str(meta.get("counts_exact_match", "")).lower() == "true"
+            counts_badge = "✅ all counts match" if counts_match else "❌ count error"
             st.caption(
-                f"{gt} | {pred} | "
-                f"outcome: **{meta.get('outcome')}**, "
-                f"counts match: **{meta.get('counts_exact_match')}**"
+                f"**Counts (real → detected):**  {count_line}  \n"
+                f"**Decision:** {decision_badge}  ·  {counts_badge}"
             )
+
         st.divider()
 
 
-def render_batch_tab() -> None:
-    """Run / inspect batch energy simulations."""
+def render_batch_tab(cfg: dict) -> None:
+    """Run / inspect batch energy simulations.
+
+    Cabin geometry, max load, area / weight thresholds, confidence
+    threshold and per-class footprints are taken from the sidebar so
+    both tabs stay consistent. Override anything via the sidebar and
+    the next ``Run simulation now`` reflects it.
+    """
     st.subheader("Batch Energy Simulation")
     st.markdown(
         "Run the curated ground-truth set in `data/sim/` through the "
         "trained detector(s) and inspect the bypass-decision and counting "
-        "accuracies side by side."
+        "accuracies side by side. **Cabin and threshold values come from "
+        "the sidebar on the left.**"
     )
+
+    # Honest tell-tale: thesis numbers were computed with these defaults.
+    THESIS_W, THESIS_D, THESIS_TAUW, THESIS_TAUA = 1.4, 1.6, 0.80, 0.90
+    diverged = (
+        abs(cfg["width_m"] - THESIS_W) > 1e-3
+        or abs(cfg["depth_m"] - THESIS_D) > 1e-3
+        or abs(cfg["weight_threshold"] - THESIS_TAUW) > 1e-3
+        or abs(cfg["area_threshold"] - THESIS_TAUA) > 1e-3
+    )
+    if diverged:
+        st.warning(
+            f"Sidebar overrides the thesis defaults "
+            f"(cabin {THESIS_W}x{THESIS_D} m, τ_W={THESIS_TAUW}, τ_A={THESIS_TAUA}). "
+            "Numbers from a run started now will not match the published table."
+        )
 
     # ─── Run controls ────────────────────────────────────────────────
     with st.expander("▶ Run a new simulation", expanded=False):
@@ -347,14 +417,30 @@ def render_batch_tab() -> None:
                 value="from_demo",
                 help="Created under results/simulation/<name>/",
             )
-            cls_conf = st.slider("Four-class conf", 0.10, 0.90, 0.40, 0.05)
-            head_conf = st.slider("Head conf", 0.10, 0.90, 0.40, 0.05)
+            head_conf = st.slider(
+                "Head detector confidence",
+                0.10,
+                0.90,
+                0.40,
+                0.05,
+                help="Detection threshold for the head model only. "
+                "The four-class threshold comes from the sidebar.",
+            )
         with col_b:
-            rated_capacity = st.number_input("Rated capacity", 4, 20, value=8, step=1)
             num_calls = st.number_input("Synthetic hall calls", 100, 5000, value=1000, step=100)
             use_head = st.checkbox("Use head detector (hybrid mode)", value=True)
 
-        weights_path = ROOT / "models" / "weights" / "best.pt"
+        # Rated capacity is derived from the sidebar Rated load (75 kg / passenger).
+        rated_capacity = max(1, round(cfg["max_weight"] / 75.0))
+        st.caption(
+            f"Rated capacity (auto-derived from Rated load): "
+            f"**{rated_capacity} persons**  ·  "
+            f"Cabin: **{cfg['cabin_m2']:.2f} m²**  ·  "
+            f"τ_A=**{cfg['area_threshold']:.2f}**  ·  "
+            f"4-class conf=**{cfg['conf_threshold']:.2f}**"
+        )
+
+        weights_path = Path(cfg["weights_path"])
         head_path = ROOT / "models" / "weights" / "best_head.pt"
         if not weights_path.exists():
             st.error(f"Four-class weights not found at {weights_path}.")
@@ -367,9 +453,11 @@ def render_batch_tab() -> None:
                     weights=weights_path,
                     head_weights=head_path if use_head else None,
                     head_conf=head_conf,
-                    cls_conf=cls_conf,
+                    cls_conf=cfg["conf_threshold"],
                     rated_capacity=rated_capacity,
                     num_calls=num_calls,
+                    cabin_m2=cfg["cabin_m2"],
+                    area_threshold=cfg["area_threshold"],
                 )
             if ok:
                 st.success(f"Simulation finished → results/simulation/{run_name}/")
@@ -417,40 +505,76 @@ def render_batch_tab() -> None:
     st.markdown("### Headline metrics")
     m1, m2, m3, m4 = st.columns(4)
     m1.metric(
-        "Bypass accuracy",
+        "✅ Decision accuracy",
         bypass_acc,
-        help="Decision-level: did the controller make the right call?",
+        help=(
+            "How often the elevator controller makes the right ACCEPT / BYPASS call on each image."
+        ),
     )
     m2.metric(
-        "Counting accuracy",
+        "🔢 Counting accuracy",
         counting_acc,
-        help="Detection-level: did all per-class counts match exactly?",
+        help=(
+            "How often EVERY per-class count "
+            "(people, strollers, luggage, boxes) matches the ground truth "
+            "exactly. A stricter test than the decision accuracy: this "
+            "verifies the model is right for the right reasons."
+        ),
     )
     m3.metric(
-        "Energy saved",
+        "⚡ Energy saved",
         f"{energy.get('energy_saved_pct', '0')} %",
         f"{float(energy.get('energy_saved_kj', 0)):.1f} kJ",
+        help="Energy saved by the smart policy vs. the always-stop baseline.",
     )
     m4.metric(
-        "Smart bypassed",
+        "⏭ Calls bypassed",
         energy.get("smart_bypassed_calls", "—"),
         f"of {energy.get('num_calls', '—')} calls",
     )
 
+    with st.expander("What do these two accuracies mean?"):
+        st.markdown(
+            "We report the system's correctness on **two independent levels**:\n\n"
+            "1. **Decision accuracy** — *does the controller make the "
+            "right call?* The cabin is either *full* or *not full*; the "
+            "controller is correct whenever it agrees with the ground "
+            "truth on this binary question.\n\n"
+            "2. **Counting accuracy** — *does the underlying detector "
+            "see exactly the right objects?* The image is counted as "
+            "correct only when the predicted person, stroller, luggage "
+            "and box counts ALL match the ground truth.\n\n"
+            "A high decision accuracy with a low counting accuracy means "
+            "the system often arrives at the right call via wrong counts "
+            "(*spurious correctness*). Reporting both prevents that "
+            "shortcut from inflating the headline number."
+        )
+
     # ─── Confusion matrix + tabular details ──────────────────────────
     cm_png = run_dir / "confusion_matrix.png"
     if cm_png.exists():
-        st.markdown("### Bypass-decision confusion matrix")
-        st.image(str(cm_png), width=420)
+        st.markdown("### How the bypass decisions break down")
+        col_cm, col_legend = st.columns([2, 1])
+        with col_cm:
+            st.image(str(cm_png), use_container_width=True)
+        with col_legend:
+            st.markdown(
+                "**Outcome legend**\n\n"
+                "✅ **TP** — correctly bypassed a full cabin\n\n"
+                "✅ **TN** — correctly accepted a not-full cabin\n\n"
+                "⚠ **FP** — bypassed when shouldn't (passenger waits)\n\n"
+                "❌ **FN** — accepted a full cabin (wasted stop)"
+            )
 
     csv_per = run_dir / "per_image_decisions.csv"
     if csv_per.exists():
-        with st.expander("Per-image decisions table"):
+        with st.expander("Per-image breakdown (full table)"):
             try:
                 import pandas as pd
 
                 df = pd.read_csv(csv_per)
-                st.dataframe(df, use_container_width=True, hide_index=True)
+                df_view = _friendlify_per_image_df(df)
+                st.dataframe(df_view, use_container_width=True, hide_index=True)
             except ImportError:
                 st.code(csv_per.read_text(encoding="utf-8"))
 
@@ -464,9 +588,13 @@ def render_batch_tab() -> None:
             st.markdown(md_rep.read_text(encoding="utf-8"))
 
 
-def render_single_frame_tab() -> None:
-    """Single-image detection + decision (the original demo screen)."""
-    # ─── Sidebar ──────────────────────────────────────────────────────
+def render_sidebar() -> dict:
+    """Render the global sidebar and return all configuration values.
+
+    These values drive **both** the Single Frame tab and the Batch
+    Simulation tab — change a slider once, both views (and the
+    subprocess that scripts.run_simulation spawns) honour it.
+    """
     with st.sidebar:
         st.header("Cabin geometry")
         width_m = st.number_input("Width (m)", 0.5, 3.0, value=1.4, step=0.05)
@@ -506,6 +634,35 @@ def render_single_frame_tab() -> None:
 
         st.header("Model")
         weights_path = st.text_input("Weights path", value=str(DEFAULT_WEIGHTS))
+
+    return {
+        "width_m": width_m,
+        "depth_m": depth_m,
+        "cabin_m2": cabin_m2,
+        "max_weight": max_weight,
+        "current_weight": current_weight,
+        "conf_threshold": conf_threshold,
+        "weight_threshold": weight_threshold,
+        "area_threshold": area_threshold,
+        "class_areas": class_areas,
+        "weights_path": weights_path,
+    }
+
+
+def render_single_frame_tab(cfg: dict) -> None:
+    """Single-image detection + decision (the original demo screen).
+
+    All cabin / detection / threshold parameters come from the sidebar
+    via ``cfg`` so they stay consistent with the Batch Simulation tab.
+    """
+    cabin_m2 = cfg["cabin_m2"]
+    max_weight = cfg["max_weight"]
+    current_weight = cfg["current_weight"]
+    conf_threshold = cfg["conf_threshold"]
+    weight_threshold = cfg["weight_threshold"]
+    area_threshold = cfg["area_threshold"]
+    class_areas = cfg["class_areas"]
+    weights_path = cfg["weights_path"]
 
     # ─── Main: input + output ─────────────────────────────────────────
     col_input, col_output = st.columns([1, 1])
@@ -627,11 +784,13 @@ def main() -> None:
         "hall call should be **accepted** or **bypassed**."
     )
 
+    cfg = render_sidebar()
+
     tab_single, tab_batch = st.tabs(["Single Frame", "Batch Simulation"])
     with tab_single:
-        render_single_frame_tab()
+        render_single_frame_tab(cfg)
     with tab_batch:
-        render_batch_tab()
+        render_batch_tab(cfg)
 
     # ─── Footer ──────────────────────────────────────────────────────
     st.markdown("---")
