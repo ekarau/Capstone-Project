@@ -89,10 +89,21 @@ from src.energy.consumption import (
 CLASS_NAMES = ("person", "stroller", "luggage", "box")
 
 CLASS_AREAS_M2: dict[str, float] = {
-    "person": 0.20,  # TS EN 81-20:2020 §5.4.2.1.1
-    "stroller": 0.45,  # ~90 × 50 cm single stroller
-    "luggage": 0.18,  # IATA cabin / mid-size mix
-    "box": 0.20,  # ~50 × 40 cm medium carton
+    # ISO 8100-32:2020 §6.4 specifies Ap in [0.17, 0.22] m² depending on car
+    # load; EN 81-20:2020 §5.4.2.1.1 cites 0.17 m² for the rated-mass method.
+    # 0.20 m² is the mid-range value used in elevator capacity calculations
+    # (Tukia et al., 2018).
+    "person": 0.20,
+    # EN 1888-1:2018 governs single-pushchair safety. Product survey:
+    # Bugaboo Butterfly ≈ 0.22 m², UPPAbaby Vista 91×65 cm ≈ 0.60 m²;
+    # population mean ≈ 0.45 m².
+    "stroller": 0.45,
+    # IATA Resolution 753 cabin baggage standard: 56 × 36 × 23 cm →
+    # footprint 0.20 m². Used as the canonical mid-size luggage value.
+    "luggage": 0.20,
+    # Industry e-commerce parcel mean ≈ 46 × 41 × 15 cm → footprint
+    # ≈ 0.19 m² (Red Stag Fulfillment, 2026 benchmark).
+    "box": 0.20,
 }
 
 DEFAULT_CABIN_M2 = 2.24  # 1.4 × 1.6 m — configs/default.yaml

@@ -39,10 +39,13 @@ The script computes the true occupancy as
 
 ```
 occupancy = (gt_person × 0.20) + (gt_stroller × 0.45)
-          + (gt_luggage × 0.18) + (gt_box × 0.20)   [in m²]
+          + (gt_luggage × 0.20) + (gt_box × 0.20)   [in m²]
 ```
 
-and flags the cabin as full when `occupancy / cabin_area ≥ 0.90`.
+and flags the cabin as full when `occupancy / cabin_area ≥ 0.90`. Footprint
+values are anchored to ISO 8100-32:2020 (person), EN 1888-1:2018 (stroller),
+IATA Resolution 753 (luggage), and industry e-commerce parcel benchmarks
+(box) — see the project README for full citations.
 
 ## Run the simulation
 

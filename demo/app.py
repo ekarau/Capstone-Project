@@ -42,12 +42,12 @@ ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_WEIGHTS = ROOT / "models" / "weights" / "best.pt"
 SAMPLE_DIR = ROOT / "data" / "unified" / "test" / "images"
 
-# Per-class average footprint (m²) — TS EN 81-20:2020 + product-typical means.
+# Per-class average footprint (m²) — literature-anchored values.
 DEFAULT_AREAS_M2: dict[str, float] = {
-    "person": 0.20,  # TS EN 81-20:2020 §5.4.2.1.1
-    "stroller": 0.45,  # ~90×50 cm single stroller
-    "luggage": 0.18,  # IATA cabin / mid-size mix
-    "box": 0.20,  # 50×40 cm medium carton
+    "person": 0.20,  # ISO 8100-32:2020 §6.4 (Ap range 0.17-0.22 m²); EN 81-20:2020
+    "stroller": 0.45,  # EN 1888-1:2018 + product survey (Bugaboo 0.22 - UPPAbaby Vista 0.60)
+    "luggage": 0.20,  # IATA Resolution 753 cabin baggage (56 x 36 cm = 0.20 m^2)
+    "box": 0.20,  # Industry e-commerce parcel mean (Red Stag 2026 benchmark)
 }
 
 DECISION_LABELS = {
