@@ -638,8 +638,7 @@ def main() -> None:
     st.markdown(
         "**Smart Elevator CV** · Capstone Project, Istinye University · "
         "Authors: Ege Karaurgan, Vedat Efe Gezer · "
-        "Advisor: Assoc. Prof. Dr. Bahman · "
-        "Methodology: TS EN 81-20:2020 + Andrei & Ruokokoski (2022) PDF Algorithm 1."
+        "Advisor: Assoc. Prof. Dr. Bahman"
     )
 
 
