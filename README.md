@@ -79,7 +79,22 @@ Defaults: $\tau_W = 0.80$, $\tau_A = 0.90$. The weight gate runs first so the ch
 
 ### Energy
 
-A power model after Tukia et al. (2018) converts every avoided stop into joules saved. Each accepted call costs running energy (motor + counterweight), door-cycle energy, and a fixed stop-idle term. Bypassing the call saves all of it.
+The simulation charges every accepted hall call with the elevator energy required to actually deliver that cabin's load over the average traversal distance. The Tukia et al. (2018) model is used in **per-call dynamic mode**: instead of one fleet-average stop, each accepted call is priced by its own load and that load is built up from the labelled object counts:
+
+$$
+m_{\text{cabin}}(d) = n_{\text{person}} \bar{m}_{\text{person}} + n_{\text{stroller}} \bar{m}_{\text{stroller}} + n_{\text{luggage}} \bar{m}_{\text{luggage}} + n_{\text{box}} \bar{m}_{\text{box}}
+$$
+
+with literature-anchored per-class masses:
+
+| Class    | $\bar{m}_c$ (kg) | Source |
+|----------|:---:|---|
+| person   | 75 | EN 81-20:2020 / ISO 8100-1 rated mass per passenger; same value used by Tukia et al. (2018) |
+| stroller | 20 | Empty single stroller 7–12 kg (EN 1888-1:2018 + product survey) plus typical occupant child 10–12 kg |
+| luggage  | 15 | IATA cabin allowance ~ 8 kg, checked baggage typically 15–23 kg; mixed elevator distribution ≈ 15 kg |
+| box      |  5 | E-commerce parcel mean 1–3 kg (Red Stag Fulfillment 2026); larger logistics cartons reach ~ 10 kg |
+
+A heavy cabin therefore costs proportionally more motor energy than a light one, so bypassing a full cabin saves substantially more joules than bypassing a near-empty one. Each accepted stop also incurs the standard door-cycle and stop-idle terms from the Tukia model. Bypass saves the entire stop.
 
 ## Results
 
