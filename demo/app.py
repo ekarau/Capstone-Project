@@ -178,73 +178,287 @@ def run_analysis(
 # ──────────────────────────────────────────────────────────────────────
 
 
-SIM_RESULTS_DIR = ROOT / "results" / "simulation"
+SIM_RESULTS_ROOT = ROOT / "results" / "simulation"
+SIM_IMAGES_DIR = ROOT / "data" / "sim" / "images"
+SIM_GT_CSV = ROOT / "data" / "sim" / "ground_truth.csv"
 
 
-def render_batch_tab() -> None:
-    """Read and display the latest simulation outputs produced by
-    ``python -m scripts.run_simulation``."""
-    st.subheader("Batch Energy Simulation")
-    st.markdown(
-        "Aggregate results from the curated ground-truth set in "
-        "`data/sim/`, scored with the trained detector and aggregated "
-        "over a synthetic stream of hall calls. See "
-        "`scripts/run_simulation.py` for the pipeline."
-    )
+def _list_run_dirs() -> list[str]:
+    """Return existing simulation run sub-directory names, newest first."""
+    if not SIM_RESULTS_ROOT.is_dir():
+        return []
+    runs = [p for p in SIM_RESULTS_ROOT.iterdir() if p.is_dir()]
+    runs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return [p.name for p in runs]
 
-    cm_png = SIM_RESULTS_DIR / "confusion_matrix.png"
-    csv_per = SIM_RESULTS_DIR / "per_image_decisions.csv"
-    csv_eng = SIM_RESULTS_DIR / "energy_savings.csv"
-    md_rep = SIM_RESULTS_DIR / "report.md"
 
-    if not csv_eng.exists():
-        st.warning(
-            "No simulation outputs found yet. Place 20-30 cabin photos in "
-            "`data/sim/images/`, fill `data/sim/ground_truth.csv`, then run:\n\n"
-            "```\npython -m scripts.run_simulation \\\n"
-            "    --images data/sim/images \\\n"
-            "    --ground-truth data/sim/ground_truth.csv \\\n"
-            "    --weights models/weights/best.pt \\\n"
-            "    --rated-capacity 8\n```"
+def _parse_energy_csv(path: Path) -> dict[str, str]:
+    out: dict[str, str] = {}
+    if not path.exists():
+        return out
+    for row in path.read_text(encoding="utf-8").splitlines()[1:]:
+        if "," in row:
+            k, v = row.split(",", 1)
+            out[k.strip()] = v.strip()
+    return out
+
+
+def _run_simulation(
+    run_name: str,
+    weights: Path,
+    head_weights: Path | None,
+    head_conf: float,
+    cls_conf: float,
+    rated_capacity: int,
+    num_calls: int,
+) -> tuple[bool, str]:
+    """Invoke scripts.run_simulation as a subprocess. Returns (ok, stdout)."""
+    import subprocess
+    import sys as _sys
+
+    cmd = [
+        _sys.executable,
+        "-m",
+        "scripts.run_simulation",
+        "--images",
+        str(SIM_IMAGES_DIR),
+        "--ground-truth",
+        str(SIM_GT_CSV),
+        "--weights",
+        str(weights),
+        "--head-conf",
+        f"{head_conf:.2f}",
+        "--conf-threshold",
+        f"{cls_conf:.2f}",
+        "--rated-capacity",
+        str(rated_capacity),
+        "--num-calls",
+        str(num_calls),
+        "--output",
+        str(SIM_RESULTS_ROOT / run_name),
+    ]
+    if head_weights is not None:
+        cmd.extend(["--head-weights", str(head_weights)])
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+            encoding="utf-8",
+        )
+    except Exception as exc:  # pragma: no cover — surfaced in UI
+        return False, f"failed to launch subprocess: {exc}"
+    output = (result.stdout or "") + ("\n" + result.stderr if result.stderr else "")
+    return (result.returncode == 0), output
+
+
+def _render_image_gallery(run_dir: Path) -> None:
+    """Side-by-side gallery: original | 4-class annotated | head annotated."""
+    pred_dir = run_dir / "predictions"
+    head_pred_dir = run_dir / "predictions_head"
+    if not pred_dir.is_dir() or not SIM_IMAGES_DIR.is_dir():
+        st.info(
+            "No annotated predictions found in this run. Re-run the "
+            "simulation (annotated frames are saved by default)."
         )
         return
 
-    # Energy savings summary.
-    energy: dict[str, str] = {}
-    with open(csv_eng, encoding="utf-8") as f:
-        for row in f.read().splitlines()[1:]:
-            if "," in row:
-                k, v = row.split(",", 1)
-                energy[k.strip()] = v.strip()
+    # Per-image counts for the caption.
+    csv_per = run_dir / "per_image_decisions.csv"
+    rows_by_name: dict[str, dict] = {}
+    if csv_per.exists():
+        try:
+            import pandas as pd
 
-    st.markdown("### Energy aggregates")
-    c1, c2, c3 = st.columns(3)
-    c1.metric(
-        "Energy saved",
-        f"{float(energy.get('energy_saved_kj', 0)):.1f} kJ",
-        f"{energy.get('energy_saved_pct', '0')} %",
+            df = pd.read_csv(csv_per)
+            rows_by_name = {row["filename"]: row.to_dict() for _, row in df.iterrows()}
+        except ImportError:
+            pass
+
+    images = sorted(pred_dir.iterdir())
+    if not images:
+        st.info("Predictions directory is empty.")
+        return
+
+    page_size = 6
+    page = st.number_input(
+        "Page",
+        min_value=1,
+        max_value=max(1, (len(images) + page_size - 1) // page_size),
+        value=1,
+        step=1,
+        help=f"{len(images)} images total, {page_size} per page",
     )
-    c2.metric("Saved (kWh)", energy.get("energy_saved_kwh", "—"))
-    c3.metric(
+    start = (int(page) - 1) * page_size
+    end = start + page_size
+
+    for pred_path in images[start:end]:
+        name = pred_path.name
+        original = SIM_IMAGES_DIR / name
+        head_pred = head_pred_dir / name if head_pred_dir.is_dir() else None
+        meta = rows_by_name.get(name, {})
+
+        st.markdown(f"**{name}**")
+        cols = st.columns(3 if head_pred and head_pred.exists() else 2)
+        if original.exists():
+            cols[0].image(str(original), caption="Original", use_container_width=True)
+        else:
+            cols[0].info("Original image missing.")
+        cols[1].image(str(pred_path), caption="4-class detector", use_container_width=True)
+        if head_pred and head_pred.exists():
+            cols[2].image(str(head_pred), caption="Head detector", use_container_width=True)
+
+        if meta:
+            gt = (
+                f"GT counts: person={meta.get('gt_person')}  "
+                f"stroller={meta.get('gt_stroller')}  "
+                f"luggage={meta.get('gt_luggage')}  box={meta.get('gt_box')}"
+            )
+            pred = (
+                f"Pred counts: person={meta.get('pred_person')}  "
+                f"stroller={meta.get('pred_stroller')}  "
+                f"luggage={meta.get('pred_luggage')}  box={meta.get('pred_box')}"
+            )
+            st.caption(
+                f"{gt} | {pred} | "
+                f"outcome: **{meta.get('outcome')}**, "
+                f"counts match: **{meta.get('counts_exact_match')}**"
+            )
+        st.divider()
+
+
+def render_batch_tab() -> None:
+    """Run / inspect batch energy simulations."""
+    st.subheader("Batch Energy Simulation")
+    st.markdown(
+        "Run the curated ground-truth set in `data/sim/` through the "
+        "trained detector(s) and inspect the bypass-decision and counting "
+        "accuracies side by side."
+    )
+
+    # ─── Run controls ────────────────────────────────────────────────
+    with st.expander("▶ Run a new simulation", expanded=False):
+        col_a, col_b = st.columns(2)
+        with col_a:
+            run_name = st.text_input(
+                "Output directory name",
+                value="from_demo",
+                help="Created under results/simulation/<name>/",
+            )
+            cls_conf = st.slider("Four-class conf", 0.10, 0.90, 0.40, 0.05)
+            head_conf = st.slider("Head conf", 0.10, 0.90, 0.40, 0.05)
+        with col_b:
+            rated_capacity = st.number_input("Rated capacity", 4, 20, value=8, step=1)
+            num_calls = st.number_input("Synthetic hall calls", 100, 5000, value=1000, step=100)
+            use_head = st.checkbox("Use head detector (hybrid mode)", value=True)
+
+        weights_path = ROOT / "models" / "weights" / "best.pt"
+        head_path = ROOT / "models" / "weights" / "best_head.pt"
+        if not weights_path.exists():
+            st.error(f"Four-class weights not found at {weights_path}.")
+        elif use_head and not head_path.exists():
+            st.error(f"Head weights not found at {head_path}.")
+        elif st.button("▶ Run simulation now", type="primary"):
+            with st.spinner(f"Running simulation → {run_name} (this can take a minute) …"):
+                ok, output = _run_simulation(
+                    run_name=run_name,
+                    weights=weights_path,
+                    head_weights=head_path if use_head else None,
+                    head_conf=head_conf,
+                    cls_conf=cls_conf,
+                    rated_capacity=rated_capacity,
+                    num_calls=num_calls,
+                )
+            if ok:
+                st.success(f"Simulation finished → results/simulation/{run_name}/")
+            else:
+                st.error("Simulation failed. See the captured output below.")
+            with st.expander("subprocess output", expanded=not ok):
+                st.code(output or "(no output)")
+
+    # ─── Run selector ────────────────────────────────────────────────
+    runs = _list_run_dirs()
+    if not runs:
+        st.warning(
+            "No simulation runs yet. Open the 'Run a new simulation' "
+            "expander above and click 'Run simulation now'."
+        )
+        return
+
+    selected_run = st.selectbox(
+        "Run to display",
+        options=runs,
+        index=0,
+        help="Most recently modified first.",
+    )
+    run_dir = SIM_RESULTS_ROOT / selected_run
+
+    # ─── Headline metrics ────────────────────────────────────────────
+    energy = _parse_energy_csv(run_dir / "energy_savings.csv")
+    md_rep = run_dir / "report.md"
+
+    # Two accuracies + energy.
+    bypass_acc = "—"
+    counting_acc = "—"
+    if md_rep.exists():
+        text = md_rep.read_text(encoding="utf-8")
+        # Cheap parse: grab the bolded numbers next to the labels.
+        import re
+
+        m1 = re.search(r"Bypass accuracy[^\d]*([\d.]+)", text)
+        m2 = re.search(r"Counting accuracy[^\d]*([\d.]+)", text)
+        if m1:
+            bypass_acc = f"{float(m1.group(1)) * 100:.1f}%"
+        if m2:
+            counting_acc = f"{float(m2.group(1)) * 100:.1f}%"
+
+    st.markdown("### Headline metrics")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric(
+        "Bypass accuracy",
+        bypass_acc,
+        help="Decision-level: did the controller make the right call?",
+    )
+    m2.metric(
+        "Counting accuracy",
+        counting_acc,
+        help="Detection-level: did all per-class counts match exactly?",
+    )
+    m3.metric(
+        "Energy saved",
+        f"{energy.get('energy_saved_pct', '0')} %",
+        f"{float(energy.get('energy_saved_kj', 0)):.1f} kJ",
+    )
+    m4.metric(
         "Smart bypassed",
         energy.get("smart_bypassed_calls", "—"),
         f"of {energy.get('num_calls', '—')} calls",
     )
 
+    # ─── Confusion matrix + tabular details ──────────────────────────
+    cm_png = run_dir / "confusion_matrix.png"
     if cm_png.exists():
-        st.markdown("### Per-image confusion matrix")
+        st.markdown("### Bypass-decision confusion matrix")
         st.image(str(cm_png), width=420)
 
+    csv_per = run_dir / "per_image_decisions.csv"
     if csv_per.exists():
-        st.markdown("### Per-image decisions")
-        try:
-            import pandas as pd
+        with st.expander("Per-image decisions table"):
+            try:
+                import pandas as pd
 
-            df = pd.read_csv(csv_per)
-            st.dataframe(df, use_container_width=True, hide_index=True)
-        except ImportError:
-            st.code(csv_per.read_text(encoding="utf-8"))
+                df = pd.read_csv(csv_per)
+                st.dataframe(df, use_container_width=True, hide_index=True)
+            except ImportError:
+                st.code(csv_per.read_text(encoding="utf-8"))
 
+    # ─── Image gallery: original vs annotated ────────────────────────
+    st.markdown("### Image gallery — original vs annotated")
+    _render_image_gallery(run_dir)
+
+    # ─── Full Markdown report ────────────────────────────────────────
     if md_rep.exists():
         with st.expander("Full Markdown report"):
             st.markdown(md_rep.read_text(encoding="utf-8"))
