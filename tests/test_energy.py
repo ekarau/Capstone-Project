@@ -1,4 +1,4 @@
-"""Smoke tests for the Tukia (2018) energy model."""
+"""Smoke tests for the energy model."""
 
 from __future__ import annotations
 

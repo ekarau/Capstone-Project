@@ -1,4 +1,4 @@
-"""Two-stage load-and-area elevator control (Andrei & Ruokokoski, 2022).
+"""Two-stage load-and-area elevator control.
 
 For each incoming hall call the controller emits one of three decisions
 :math:`\\delta \\in \\{\\text{accept},\\text{bypass}_W,\\text{bypass}_A\\}`

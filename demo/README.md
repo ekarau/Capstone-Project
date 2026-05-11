@@ -37,7 +37,7 @@ Streamlit opens the demo at `http://localhost:8501`.
 | YOLO confidence         | Detection threshold; lower = more recall, more FPs       | 0.40 |
 | Weight bypass τ_W       | Bypass when `W ≥ τ_W · W_rated`                          | 0.80 |
 | Area bypass τ_A         | Bypass when `ρ ≥ τ_A`                                    | 0.90 |
-| Per-class footprints    | Override TS EN 81-20 / ISO 8100 defaults                 | see app |
+| Per-class footprints    | Override the per-class defaults                          | see app |
 | Weights path            | Where to find `best.pt`                                  | `models/weights/best.pt` |
 
 ## Notes for the jury demo

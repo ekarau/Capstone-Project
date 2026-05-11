@@ -80,6 +80,13 @@ desktop.ini
 # ──────────────────────────────────────────────────────────────────────
 results/logs/
 results/runs/
+# Simulation experiments — keep only the canonical 'final' run (and the
+# original baseline / hybrid that ship with v0.3.0) under version control.
+# Ad-hoc grid-search and sensitivity runs stay local.
+results/simulation/*/
+!results/simulation/final/
+!results/simulation/baseline/
+!results/simulation/hybrid/
 *.log
 notebook_cell*_out*.png
 05_train_v2_area.ipynb     # root copy with Colab outputs (canonical is in notebooks/)

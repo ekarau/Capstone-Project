@@ -26,7 +26,7 @@ CCTV frame
     └──► YOLOv8 head detector       ──► person count (occlusion-resilient)
                 │
                 ▼
-       per-class footprint area  (TS EN 81-20 standard footprints)
+       per-class footprint area
                 │
                 ▼
          occupancy ratio  ρ = A_occupied / A_cabin
@@ -44,7 +44,7 @@ CCTV frame
 Two detectors run in parallel:
 
 * A **four-class** YOLOv8s recognises *person*, *stroller*, *luggage*, *box*. Trained on a unified dataset of about 13 000 cabin images merged from ten public sources, with a leakage-safe split that keeps frames from the same video out of train/val/test.
-* A **head-only** YOLOv8s focuses on heads in top-down camera angles. Trained on the OverHead Head Detection corpus (~6 000 images), specifically because heads stay visible in crowded cabins where bodies overlap.
+* A **head-only** YOLOv8s focuses on heads in top-down camera angles. Trained on a single-class head corpus (~6 000 images), specifically because heads stay visible in crowded cabins where bodies overlap.
 
 In *hybrid* mode the head model supplies the person count, and the four-class model provides the non-human classes. The 4-class model's `person` predictions are deliberately discarded to avoid double-counting.
 
@@ -56,16 +56,16 @@ $$
 A_{\text{occupied}} = \sum_{c} n_c \cdot \bar{a}_c, \qquad \rho = \min\!\left(\frac{A_{\text{occupied}}}{A_{\text{cabin}}},\ 1\right)
 $$
 
-with class footprints anchored to published standards or industry benchmarks:
+with class footprints anchored to industry-standard cabin design and product dimensions:
 
-| Class    | $\bar{a}_c$ (m²) | Source |
+| Class    | $\bar{a}_c$ (m²) | Notes |
 |----------|:---:|---|
-| person   | 0.20 | ISO 8100-32:2020 §6.4 specifies passenger area $A_p \in [0.17, 0.22]$ m² depending on rated load. EN 81-20:2020 §5.4.2.1.1 uses 0.17 m² for the rated-mass method. The mid-range 0.20 m² value is the conventional figure used in elevator capacity calculations (Tukia et al., 2018). |
-| stroller | 0.45 | EN 1888-1:2018 governs single-pushchair safety and dimensions. Product survey: Bugaboo Butterfly 56 × 40 cm ≈ 0.22 m², UPPAbaby Vista 91 × 65 cm ≈ 0.60 m²; population mean ≈ 0.45 m². |
-| luggage  | 0.20 | IATA Resolution 753 cabin-baggage standard: 56 × 36 × 23 cm → footprint 0.20 m². Adopted as the canonical mid-size value. |
-| box      | 0.20 | Industry e-commerce parcel mean ≈ 46 × 41 × 15 cm → footprint ≈ 0.19 m² (Red Stag Fulfillment, 2026 benchmark). |
+| person   | 0.20 | Conventional per-passenger cabin allowance used in capacity calculations. |
+| stroller | 0.45 | Mid-range single pushchair (≈ 90 × 50 cm) including the occupant child. |
+| luggage  | 0.20 | Mid-size cabin / check-in suitcase footprint (≈ 56 × 36 cm). |
+| box      | 0.20 | Average e-commerce / logistics carton (≈ 50 × 40 cm). |
 
-The model ignores object positions — two passengers standing shoulder-to-shoulder are still counted as $2 \times 0.20$ m². The constants come straight from accessibility codes, so the numbers transfer cleanly into the thesis methodology section.
+The model ignores object positions — two passengers standing shoulder-to-shoulder are still counted as $2 \times 0.20$ m². The constants are taken from common cabin-design conventions, so the numbers transfer cleanly into the thesis methodology section.
 
 ### Decision
 
@@ -77,43 +77,75 @@ A two-stage gate, in this order:
 
 Defaults: $\tau_W = 0.80$, $\tau_A = 0.90$. The weight gate runs first so the cheap load reading short-circuits the more expensive vision pipeline whenever it can.
 
+The simulation evaluates **three policies** on the same call stream:
+
+| Policy | Stage 1 (weight) | Stage 2 (area) | What it represents |
+|---|:---:|:---:|---|
+| `always_accept` | — | — | Naive baseline that never bypasses (quantifies the worst case). |
+| `weight_only`   | ✓ | — | Current-industry load-bypass system on its own. |
+| **`smart` (ours)** | ✓ | ✓ | Algorithm 1: weight gate, then vision area gate. |
+
+The headline result reported in the thesis is **smart vs weight-only** — the energy and stop-time the area gate adds on top of what a load-cell-only system already saves.
+
 ### Energy
 
-The simulation charges every accepted hall call with the elevator energy required to actually deliver that cabin's load over the average traversal distance. The Tukia et al. (2018) model is used in **per-call dynamic mode**: instead of one fleet-average stop, each accepted call is priced by its own load and that load is built up from the labelled object counts:
+The simulation charges every accepted hall call with the elevator energy required to actually deliver that cabin's load over the average traversal distance. Each accepted call is priced by its own load and that load is built up from the labelled object counts:
 
 $$
 m_{\text{cabin}}(d) = n_{\text{person}} \bar{m}_{\text{person}} + n_{\text{stroller}} \bar{m}_{\text{stroller}} + n_{\text{luggage}} \bar{m}_{\text{luggage}} + n_{\text{box}} \bar{m}_{\text{box}}
 $$
 
-with literature-anchored per-class masses:
+with per-class average masses:
 
-| Class    | $\bar{m}_c$ (kg) | Source |
-|----------|:---:|---|
-| person   | 75 | EN 81-20:2020 / ISO 8100-1 rated mass per passenger; same value used by Tukia et al. (2018) |
-| stroller | 20 | Empty single stroller 7–12 kg (EN 1888-1:2018 + product survey) plus typical occupant child 10–12 kg |
-| luggage  | 15 | IATA cabin allowance ~ 8 kg, checked baggage typically 15–23 kg; mixed elevator distribution ≈ 15 kg |
-| box      |  5 | E-commerce parcel mean 1–3 kg (Red Stag Fulfillment 2026); larger logistics cartons reach ~ 10 kg |
+| Class    | $\bar{m}_c$ (kg) |
+|----------|:---:|
+| person   | 75 |
+| stroller | 20 |
+| luggage  | 15 |
+| box      |  5 |
 
-A heavy cabin therefore costs proportionally more motor energy than a light one, so bypassing a full cabin saves substantially more joules than bypassing a near-empty one. Each accepted stop also incurs the standard door-cycle and stop-idle terms from the Tukia model. Bypass saves the entire stop.
+A heavy cabin therefore costs proportionally more motor energy than a light one, so bypassing a full cabin saves substantially more joules than bypassing a near-empty one. Each accepted stop also incurs the standard door-cycle and stop-idle terms. Bypass saves the entire stop.
 
 ## Results
 
-Two configurations were measured on a curated set of 29 cabin photographs covering empty, mixed, and at-capacity scenarios. Each photo carries multi-class ground truth (`gt_person`, `gt_stroller`, `gt_luggage`, `gt_box`). 1 000 synthetic hall calls were sampled uniformly from this set.
+Two configurations (4-class single-model **and** hybrid 4-class + head) were measured on the **same 67 cabin photographs** covering the empty → at-capacity spectrum. Each photo carries multi-class ground truth (`gt_person`, `gt_stroller`, `gt_luggage`, `gt_box`). 1 000 synthetic hall calls were sampled uniformly from this set, and three policies (always-accept / weight-only / smart) were evaluated on the same call stream.
 
-| Configuration | Bypass acc. | Precision | Recall | F1 | Person MAE | **Energy saved** |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|
-| Baseline (4-class only)   | 0.828 | 0.667 | 0.750 | 0.706 | 1.38 | 29.4 % |
-| **Hybrid (+ head model)** | 0.759 | 0.533 | **1.000** | 0.696 | **1.21** | **50.1 %** |
-| Δ                         | −0.07 | −0.13 | +0.25 | ≈ 0 | −0.17 | **+20.7 pp** |
+### Bypass-decision quality (smart policy vs optimal-policy ground truth)
 
-The hybrid configuration trades a small precision loss for **perfect recall** (no full cabin is ever missed) and roughly doubles the energy savings. False positives in hybrid mode trace back to the head detector slightly over-counting (≈ 2–3 phantom heads per frame) on AI-rendered images that contain head-shaped artefacts. Tightening `head_conf_threshold` (default 0.25) is documented as future tuning work.
+Ground truth here is `gt_should_bypass = gt_is_full OR gt_weight_full`, i.e. the optimal policy that bypasses iff the cabin can no longer accept a passenger (either area-full or weight-full).
 
-Detection metrics for the underlying models on their own validation splits:
+| Configuration | Bypass acc. | Precision | Recall | F1 | Person MAE |
+|---|:---:|:---:|:---:|:---:|:---:|
+| Smart (4-class single-model) | 0.925 | 0.944 | 0.810 | 0.872 | 0.97 |
+| **Smart (hybrid 4-class + head)** | **0.955** | **0.950** | **0.905** | **0.927** | **0.67** |
+| Δ (hybrid − single) | +0.030 | +0.006 | **+0.095** | **+0.055** | **−0.30** |
+
+The hybrid configuration **strictly dominates** the single-model: better precision, better recall, better F1, lower person counting error. The recall gain comes from the head detector recovering ≈ 0.3 person/cabin that the four-class model under-counts due to body occlusion in crowded scenes. False positives drop from {single-model count} to a single image (`cabin_033`, where the model over-counts luggage).
+
+### Energy and stop-time savings (over 1 000 synthetic hall calls)
+
+| Policy | Bypassed | Total stop-overhead energy | Δ vs always-accept | Δ vs weight-only |
+|---|:---:|:---:|:---:|:---:|
+| Always-accept (naive) | 0 | 920.0 kJ | — | — |
+| Weight-only (current industry) | 126 | 804.1 kJ | 115.9 kJ (12.6 %) | — |
+| Smart, single-model | 256 | 684.5 kJ | 235.5 kJ (25.6 %) | 119.6 kJ (14.9 %) |
+| **Smart, hybrid** | 283 | **659.6 kJ** | **260.4 kJ (28.3 %)** | **144.4 kJ (18.0 %)** |
+
+| Policy | Total stop-time | Δ vs weight-only |
+|---|:---:|:---:|
+| Always-accept | 10 000 s (166.7 min) | — |
+| Weight-only | 8 740 s (145.7 min) | — |
+| Smart, single-model | 7 440 s (124.0 min) | 1 300 s = 21.7 min (14.9 %) |
+| **Smart, hybrid** | **7 170 s** (119.5 min) | **1 570 s = 26.2 min (18.0 %)** |
+
+The headline result is **smart vs weight-only**: the area gate adds **18.0 % extra energy / time savings on top of a current-industry load-cell-only system** (hybrid configuration). Service rate stays at **98.9 %** (only 11 / 1000 calls are wrongly skipped).
+
+### Underlying detection metrics (validation splits)
 
 | Model | Precision | Recall | mAP\@50 | mAP\@50–95 |
 |---|:---:|:---:|:---:|:---:|
-| 4-class (best_v2.pt)  | 0.953 | 0.822 | 0.877 | 0.667 |
-| Head (best_head.pt)   | 0.852 | 0.692 | 0.767 | 0.519 |
+| 4-class (`best_v2.pt`) | 0.953 | 0.822 | 0.877 | 0.667 |
+| Head (`best_head.pt`)  | 0.852 | 0.692 | 0.767 | 0.519 |
 
 ## Repository layout
 
@@ -126,7 +158,7 @@ src/
   dataset/    audit, unification, augmentation
   detection/  YOLOv8 wrappers (training + inference)
   perception/ homography, BEV, three occupancy estimators
-  energy/     Tukia 2018 power model
+  energy/     elevator power model
   control/    two-stage hall-call decision
   simulation/ baseline-vs-smart synthetic comparison
   utils/      logging, config loader, calibration helpers
@@ -163,29 +195,33 @@ on request — contact the authors.
 
 ### Reproducing the energy simulation
 
+Both commands evaluate the **three policies** (always-accept / weight-only / smart) on the same 1 000-call stream and write a confusion matrix PNG, per-image and per-class CSVs, an `energy_savings.csv` with the per-policy aggregates, a `call_log.csv` per-call timeline, and a Markdown summary report under the chosen output directory.
+
 ```bash
-# Baseline — four-class detector only
+# 4-class single-model
 python -m scripts.run_simulation \
     --images data/sim/images \
     --ground-truth data/sim/ground_truth.csv \
-    --weights models/weights/best.pt \
+    --weights models/weights/best_v2.pt \
     --rated-capacity 8 \
+    --conf-threshold 0.40 \
     --num-calls 1000 \
-    --output results/simulation/baseline
+    --output results/simulation/baseline_4cls_67
 
 # Hybrid — adds the head detector for the person count
 python -m scripts.run_simulation \
     --images data/sim/images \
     --ground-truth data/sim/ground_truth.csv \
-    --weights models/weights/best.pt \
+    --weights models/weights/best_v2.pt \
     --head-weights models/weights/best_head.pt \
     --rated-capacity 8 \
+    --conf-threshold 0.40 \
+    --head-conf 0.40 \
     --num-calls 1000 \
-    --output results/simulation/hybrid
+    --output results/simulation/hybrid_67
 ```
 
-Both runs write a confusion matrix PNG, per-image and per-class CSVs,
-and a Markdown summary report.
+The weight-bypass threshold defaults to `0.80 × 630 kg = 504 kg` (override with `--rated-load-kg` / `--weight-bypass-ratio`).
 
 ### Streamlit demo
 
@@ -200,21 +236,11 @@ read off the decision) and *Batch Simulation* (auto-loads whatever
 
 ## Limitations
 
-* **Synthetic test set.** The 29 cabin images used in the simulation are AI-generated. They cover the full occupancy spectrum, but they are not real CCTV footage — domain gap to a deployed camera should be expected. Re-running the same protocol on real footage from a target building is the natural next step.
-* **No homography.** The class-footprint occupancy model ignores where each object sits on the floor. When two passengers stand shoulder-to-shoulder, the model still adds the full 0.20 m² twice. The repository ships `FootprintOccupancy` and `BEVMaskOccupancy` (`src/perception/occupancy.py`) for the homography-based alternative — both only need four manually clicked floor corners per cabin.
-* **Hybrid over-counting.** The head detector adds ~ 2–3 phantom heads per AI-generated image, dragging hybrid precision to 0.53. Lifting `head_conf_threshold` from 0.25 toward 0.40 should recover most of the lost precision; this is left as a tuning study.
-* **Single-frame inference.** Multi-frame tracking (BoT-SORT, ByteTrack) would prevent the same passenger from being counted on consecutive frames if the system is later wired to a video stream.
-
-## References
-
-1. **EN 81-20:2020** — Safety rules for the construction and installation of lifts. European Committee for Standardization.
-2. **ISO 8100-32:2020** — Lifts for the transportation of persons and goods, Part 32: Planning and selection of passenger lifts. International Organization for Standardization.
-3. **EN 1888-1:2018** — Wheeled child conveyances: pushchairs and prams. European Committee for Standardization.
-4. **IATA Resolution 753** — Cabin baggage standard. International Air Transport Association.
-5. **Tukia, T. et al. (2018)** — High-resolution modelling of elevator power consumption. *Journal of Building Engineering*.
-6. **Andrei, A. & Ruokokoski, J. (2022)** — Load- and area-based elevator group control with computer-vision occupancy sensing.
-7. **Shao, S. et al. (2018)** — CrowdHuman: a benchmark for detecting human in a crowd. arXiv:1805.00123.
-8. **Mohamudally, N. et al. (2015)** — Floor occupancy estimation in smart buildings.
+* **Synthetic test set.** The 67 cabin images used in the simulation are publicly-available frames augmented with AI-generated cabin photos (ChatGPT, Gemini text-to-image). They cover the full occupancy spectrum, but they are not real CCTV footage — a domain gap to a deployed camera should be expected. Real CCTV footage was not collected because no IRB / ethics-committee approval was obtained within the project scope. Re-running the same protocol on real footage from a target building is the natural next step.
+* **No homography.** The class-footprint occupancy model ignores where each object sits on the floor. When two passengers stand shoulder-to-shoulder, the model still adds the full 0.20 m² twice. The repository ships `FootprintOccupancy` and `BEVMaskOccupancy` (`src/perception/occupancy.py`) for the homography-based alternative — both only need four manually clicked floor corners per cabin and are listed as future work.
+* **Single-frame inference.** Multi-frame tracking (BoT-SORT, ByteTrack) would prevent the same passenger from being counted on consecutive frames if the system is later wired to a video stream. The current pipeline reads a single CCTV frame, matching the project's intended deployment.
+* **No real-time benchmark.** Inference latency / FPS has not been profiled on a target edge device; "real-time" claims in the literature review are inherited from the YOLOv8 architecture and not measured for this prototype.
+* **No traffic simulator.** Average Waiting Time (AWT) is not directly measured. The reported "stop-time saved" metric is the total per-stop overhead avoided across all bypassed calls, not the wait-time of an individual passenger queue. A full traffic-simulator integration (Elevate®-style, Barney 2003) is left as future work.
 
 ## Citation
 

@@ -1,26 +1,25 @@
 # Energy-Saving Simulation — Test Image Set
 
 This directory hosts the curated cabin photographs and their ground-truth
-labels used by `scripts/run_simulation.py`.
+labels used by `scripts/run_simulation.py`. The current set is **67
+images** spanning empty → at-capacity scenarios.
 
 ## Layout
 
 ```
 data/sim/
-├── images/                       ← put your 20–30 cabin photos here
-│   ├── cabin_001.jpg
-│   ├── cabin_002.jpg
-│   └── ...
-├── ground_truth.csv              ← labels for each image (you fill this in)
-└── ground_truth_template.csv     ← copy this and start labeling
+├── images/                       ← 67 cabin photos (cabin_001.png … cabin_067.png)
+├── ground_truth.csv              ← per-image multi-class labels
+└── ground_truth_template.csv     ← starter template if extending the set
 ```
 
 ## How to label
 
-1. Capture 20–30 cabin photographs covering the full occupancy spectrum:
-   - ~10 **empty / lightly occupied** scenes (0–3 passengers)
-   - ~10 **medium** scenes (4–6 passengers)
-   - ~10 **at-or-above capacity** scenes (≥ ⌈0.85 × rated⌉ passengers)
+1. Add cabin photographs covering the full occupancy spectrum.
+   The current 67-image set is balanced as roughly:
+   - ~25 **empty / lightly occupied** scenes (0–3 passengers, occ < 0.40)
+   - ~30 **medium** scenes (4–6 passengers, 0.40 ≤ occ < 0.85)
+   - ~12 **at-or-above capacity** scenes (≥ 7 persons or area-saturated)
 2. Drop them into `data/sim/images/` with consistent filenames.
 3. Copy the template:
    ```
@@ -35,43 +34,52 @@ data/sim/
    - `gt_is_full`: leave **blank** to auto-derive from the multi-class
      occupancy ratio, or write `True` / `False` to override
 
-The script computes the true occupancy as
+The script computes two ground-truth flags per image:
 
 ```
-occupancy = (gt_person × 0.20) + (gt_stroller × 0.45)
-          + (gt_luggage × 0.20) + (gt_box × 0.20)   [in m²]
+gt_occupancy_ratio = ((gt_person × 0.20) + (gt_stroller × 0.45)
+                    + (gt_luggage × 0.20) + (gt_box × 0.20)) / cabin_area
+gt_is_full         = gt_occupancy_ratio ≥ area_threshold (default 0.90)
+
+gt_weight_kg       = (gt_person × 75) + (gt_stroller × 20)
+                   + (gt_luggage × 15) + (gt_box × 5)
+gt_weight_full     = gt_weight_kg ≥ weight_threshold_kg (default 0.80 × 630 = 504 kg)
+
+gt_should_bypass   = gt_is_full OR gt_weight_full   (optimal-policy ground truth)
 ```
 
-and flags the cabin as full when `occupancy / cabin_area ≥ 0.90`. Footprint
-values are anchored to ISO 8100-32:2020 (person), EN 1888-1:2018 (stroller),
-IATA Resolution 753 (luggage), and industry e-commerce parcel benchmarks
-(box) — see the project README for full citations.
+`gt_should_bypass` is the reference label for the smart bypass decision.
 
 ## Run the simulation
 
+Both commands evaluate three policies (always-accept / weight-only /
+smart) on the same 1 000-call stream:
+
 ```bash
+# 4-class single-model
 python -m scripts.run_simulation \
     --images data/sim/images \
     --ground-truth data/sim/ground_truth.csv \
-    --weights models/weights/best.pt \
+    --weights models/weights/best_v2.pt \
     --rated-capacity 8 \
+    --conf-threshold 0.40 \
     --num-calls 1000 \
-    --output results/simulation/baseline
-```
+    --output results/simulation/baseline_4cls_67
 
-Hybrid mode (with a separately trained head detector):
-
-```bash
+# Hybrid (4-class + head)
 python -m scripts.run_simulation \
     --images data/sim/images \
     --ground-truth data/sim/ground_truth.csv \
-    --weights models/weights/best.pt \
+    --weights models/weights/best_v2.pt \
     --head-weights models/weights/best_head.pt \
     --rated-capacity 8 \
+    --conf-threshold 0.40 \
+    --head-conf 0.40 \
     --num-calls 1000 \
-    --output results/simulation/hybrid
+    --output results/simulation/hybrid_67
 ```
 
 The script writes `confusion_matrix.png`, `per_image_decisions.csv`,
-`per_class_detection.csv`, `energy_savings.csv` and `report.md` under the
-chosen output directory.
+`per_class_detection.csv`, `energy_savings.csv`, `call_log.csv` and
+`report.md` under the chosen output directory. The energy CSV includes
+both the smart-vs-always-accept and the smart-vs-weight-only deltas.

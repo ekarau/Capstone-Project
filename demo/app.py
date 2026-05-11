@@ -13,10 +13,9 @@ Inputs (sidebar):
     weights file path
 
 Pipeline:
-    1. Stage-1 weight gate (PDF Algorithm 1, Andrei & Ruokokoski 2022).
+    1. Stage-1 weight gate.
     2. YOLOv8 inference on the uploaded frame.
-    3. Class-based area estimator (TS EN 81-20 / ISO 8100 standard
-       footprints).
+    3. Class-based area estimator with industry-standard footprints.
     4. Stage-2 area gate.
     5. Render annotated frame, per-class breakdown, gauges, and the
        final ACCEPT / BYPASS decision.
@@ -42,12 +41,12 @@ ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_WEIGHTS = ROOT / "models" / "weights" / "best.pt"
 SAMPLE_DIR = ROOT / "data" / "unified" / "test" / "images"
 
-# Per-class average footprint (m²) — literature-anchored values.
+# Per-class average footprint (m²).
 DEFAULT_AREAS_M2: dict[str, float] = {
-    "person": 0.20,  # ISO 8100-32:2020 §6.4 (Ap range 0.17-0.22 m²); EN 81-20:2020
-    "stroller": 0.45,  # EN 1888-1:2018 + product survey (Bugaboo 0.22 - UPPAbaby Vista 0.60)
-    "luggage": 0.20,  # IATA Resolution 753 cabin baggage (56 x 36 cm = 0.20 m^2)
-    "box": 0.20,  # Industry e-commerce parcel mean (Red Stag 2026 benchmark)
+    "person": 0.20,
+    "stroller": 0.45,
+    "luggage": 0.20,
+    "box": 0.20,
 }
 
 DECISION_LABELS = {
@@ -377,6 +376,213 @@ def _render_image_gallery(run_dir: Path) -> None:
         st.divider()
 
 
+def render_timeline_tab() -> None:
+    """Per-call simulation timeline: charts and a filterable call log."""
+    st.subheader("Call Timeline")
+    st.markdown(
+        "Per-call view of a simulation run: which floor called, what the "
+        "cabin looked like, what the smart policy decided, and how the "
+        "energy curves diverge between baseline and smart over time."
+    )
+
+    runs = _list_run_dirs()
+    if not runs:
+        st.warning("No simulation runs yet. Run one from the **Batch Simulation** tab.")
+        return
+
+    selected_run = st.selectbox(
+        "Run to inspect",
+        options=runs,
+        index=0,
+        key="timeline_run_selector",
+    )
+    run_dir = SIM_RESULTS_ROOT / selected_run
+
+    call_log_path = run_dir / "call_log.csv"
+    if not call_log_path.exists():
+        st.warning(
+            f"No call_log.csv in `{run_dir.name}`. Re-run the simulation "
+            "after the latest update to generate the per-call log."
+        )
+        return
+
+    try:
+        import pandas as pd
+    except ImportError:
+        st.error("pandas is required for the timeline view. `pip install pandas`")
+        return
+
+    df = pd.read_csv(call_log_path)
+
+    # ─── Backward-compat for older runs ──────────────────────────────
+    # Earlier runs used `energy_kj` instead of `trip_energy_kj` /
+    # `stop_overhead_kj`. Older 2-policy runs used
+    # `cumulative_baseline_kj` and a single `decision` column. Newer
+    # 3-policy runs (always-accept / weight-only / smart) use
+    # `cumulative_always_accept_kj`, `cumulative_weight_only_kj`,
+    # `cumulative_smart_kj` and a `smart_decision` column. Synthesize
+    # whichever columns are missing so the rest of the view works on
+    # any historical run.
+    OVERHEAD_KJ = 0.92  # default Tukia params: door cycle + idle = 0.92 kJ
+    OVERHEAD_S = 10  # default Tukia params: door cycle + idle = 10 s
+    if "stop_overhead_kj" not in df.columns:
+        df["stop_overhead_kj"] = OVERHEAD_KJ
+    if "trip_energy_kj" not in df.columns and "energy_kj" in df.columns:
+        df["trip_energy_kj"] = df["energy_kj"]
+    if "cumulative_always_accept_kj" not in df.columns:
+        df["cumulative_always_accept_kj"] = df.get(
+            "cumulative_baseline_kj", df["call_id"] * OVERHEAD_KJ
+        )
+    if "cumulative_weight_only_kj" not in df.columns:
+        df["cumulative_weight_only_kj"] = df["cumulative_always_accept_kj"]
+    if "smart_decision" not in df.columns and "decision" in df.columns:
+        df["smart_decision"] = df["decision"]
+
+    # ─── Summary banner ──────────────────────────────────────────────
+    n_calls = len(df)
+    n_bypassed = int((df["smart_decision"] == "bypass").sum())
+    last = df.iloc[-1]
+    aa_kj = last["cumulative_always_accept_kj"]
+    wo_kj = last["cumulative_weight_only_kj"]
+    sm_kj = last["cumulative_smart_kj"]
+    saved_vs_aa = aa_kj - sm_kj
+    saved_vs_wo = wo_kj - sm_kj
+    saved_pct_vs_aa = 100.0 * saved_vs_aa / aa_kj if aa_kj else 0.0
+    saved_pct_vs_wo = 100.0 * saved_vs_wo / wo_kj if wo_kj else 0.0
+    # Each bypassed call saves OVERHEAD_S seconds (door + idle); same
+    # constant for every call by definition of the overhead-only model.
+    saved_s = n_bypassed * OVERHEAD_S
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Total calls", n_calls)
+    m2.metric(
+        "Energy saved (vs always-accept)",
+        f"{saved_vs_aa:.1f} kJ",
+        f"{saved_pct_vs_aa:.1f}%",
+        help=(
+            "Cumulative door + idle energy avoided by smart bypasses, "
+            "compared to a naive always-accept policy. Trip running "
+            "energy is shared with other accepted calls and is therefore "
+            "not credited to the bypass decision."
+        ),
+    )
+    m3.metric(
+        "Energy saved (vs weight-only)",
+        f"{saved_vs_wo:.1f} kJ",
+        f"{saved_pct_vs_wo:.1f}%",
+        help=(
+            "Headline result: extra savings smart adds on top of a "
+            "current-industry weight-only bypass system."
+        ),
+    )
+    m4.metric(
+        "Stop-time saved",
+        f"{saved_s} s",
+        f"{saved_s / 60:.1f} min",
+        help=(
+            "Stop-time avoided by smart bypass decisions. Each unnecessary "
+            "stop costs ~10 s (door open + close + idle transfer; Barney "
+            "2003, Strakosch & Caporale 2010, ISO 25745-2)."
+        ),
+    )
+
+    # ─── Cumulative energy chart ─────────────────────────────────────
+    st.markdown("### Cumulative energy over calls")
+    st.caption(
+        "How quickly each of the three policies accrues stop-overhead "
+        "energy across the simulated day. The gaps between curves are "
+        "the savings: smart vs always-accept (max theoretical) and smart "
+        "vs weight-only (extra value of vision)."
+    )
+    energy_df = (
+        df[
+            [
+                "call_id",
+                "cumulative_always_accept_kj",
+                "cumulative_weight_only_kj",
+                "cumulative_smart_kj",
+            ]
+        ]
+        .rename(
+            columns={
+                "cumulative_always_accept_kj": "Always-accept",
+                "cumulative_weight_only_kj": "Weight-only",
+                "cumulative_smart_kj": "Smart",
+            }
+        )
+        .set_index("call_id")
+    )
+    st.line_chart(energy_df, use_container_width=True)
+
+    # ─── Outcome distribution by floor ───────────────────────────────
+    st.markdown("### Outcomes by call origin floor")
+    st.caption(
+        "How calls from each floor were handled. TP = correct bypass, "
+        "TN = correct accept, FP = wrong bypass (passenger waited), "
+        "FN = wrong accept (wasted stop)."
+    )
+    pivot = df.groupby(["origin_floor", "outcome"]).size().unstack(fill_value=0)
+    for col in ("TP", "TN", "FP", "FN"):
+        if col not in pivot.columns:
+            pivot[col] = 0
+    pivot = pivot[["TP", "TN", "FP", "FN"]]
+    st.bar_chart(pivot, use_container_width=True)
+
+    # ─── Call-log table (filterable) ─────────────────────────────────
+    st.markdown("### Call log")
+    col_a, col_b = st.columns([1, 2])
+    with col_a:
+        outcome_filter = st.multiselect(
+            "Filter by outcome",
+            options=["TP", "TN", "FP", "FN"],
+            default=["TP", "TN", "FP", "FN"],
+            help=(
+                "Pick which outcome classes to display. Useful for "
+                "inspecting only the FN (wasted) or FP (skipped) cases."
+            ),
+        )
+    with col_b:
+        max_rows = st.slider("Max rows to show", 10, 500, 50, 10)
+
+    view = df[df["outcome"].isin(outcome_filter)].head(max_rows).copy()
+
+    # Conditional saving: only bypass decisions actually save anything.
+    # Accept (TN/FN) and FP-bypass that misses the room contribute 0.
+    # The energy/time figures here are the *per-call* savings; the
+    # column header makes the unit explicit.
+    is_bypass = view["smart_decision"] == "bypass"
+    view["Energy saved (kJ)"] = view["stop_overhead_kj"].where(is_bypass, 0.0)
+    view["Time saved (s)"] = is_bypass.map(lambda b: OVERHEAD_S if b else 0)
+
+    view = view.rename(
+        columns={
+            "call_id": "Call",
+            "origin_floor": "From",
+            "dest_floor": "To",
+            "distance_floors": "Floors",
+            "direction": "Dir.",
+            "filename": "Image",
+            "smart_decision": "Decision",
+            "outcome": "Outcome",
+        }
+    )[
+        [
+            "Call",
+            "From",
+            "To",
+            "Floors",
+            "Dir.",
+            "Decision",
+            "Outcome",
+            "Energy saved (kJ)",
+            "Time saved (s)",
+            "Image",
+        ]
+    ]
+    view["Outcome"] = view["Outcome"].map(lambda v: OUTCOME_BADGES.get(v, v))
+    st.dataframe(view, use_container_width=True, hide_index=True)
+
+
 def render_batch_tab(cfg: dict) -> None:
     """Run / inspect batch energy simulations.
 
@@ -503,7 +709,7 @@ def render_batch_tab(cfg: dict) -> None:
             counting_acc = f"{float(m2.group(1)) * 100:.1f}%"
 
     st.markdown("### Headline metrics")
-    m1, m2, m3, m4 = st.columns(4)
+    m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric(
         "✅ Decision accuracy",
         bypass_acc,
@@ -525,9 +731,36 @@ def render_batch_tab(cfg: dict) -> None:
         "⚡ Energy saved",
         f"{energy.get('energy_saved_pct', '0')} %",
         f"{float(energy.get('energy_saved_kj', 0)):.1f} kJ",
-        help="Energy saved by the smart policy vs. the always-stop baseline.",
+        help=(
+            "Stop-overhead energy avoided by the smart policy. Counts only "
+            "the door cycle + idle-stop time at the bypassed floor — the "
+            "trip's running energy is shared with other accepted calls."
+        ),
     )
-    m4.metric(
+    if "time_saved_min" in energy:
+        m4.metric(
+            "⏱ Time saved",
+            f"{energy.get('time_saved_pct', '0')} %",
+            f"{float(energy.get('time_saved_min', 0)):.1f} min",
+            help=(
+                "Stop-time avoided by the smart policy. Each unnecessary "
+                "stop costs ~10 s (door open + close + idle transfer) "
+                "under the default Tukia (2018) parameters; matches "
+                "Barney (2003) and Strakosch & Caporale (2010) handbook "
+                "values."
+            ),
+        )
+    else:
+        m4.metric(
+            "⏱ Time saved",
+            "—",
+            help=(
+                "This run pre-dates the stop-time accounting feature. "
+                "Re-run the simulation from the 'Run a new simulation' "
+                "expander to populate the time-saving figures."
+            ),
+        )
+    m5.metric(
         "⏭ Calls bypassed",
         energy.get("smart_bypassed_calls", "—"),
         f"of {energy.get('num_calls', '—')} calls",
@@ -620,7 +853,7 @@ def render_sidebar() -> dict:
         area_threshold = st.slider("Area bypass τ_A", 0.50, 1.00, 0.90, 0.05)
 
         st.header("Class footprints (m²)")
-        with st.expander("Override TS EN 81-20 defaults"):
+        with st.expander("Override defaults"):
             person_m2 = st.number_input("person", value=DEFAULT_AREAS_M2["person"], step=0.01)
             stroller_m2 = st.number_input("stroller", value=DEFAULT_AREAS_M2["stroller"], step=0.01)
             luggage_m2 = st.number_input("luggage", value=DEFAULT_AREAS_M2["luggage"], step=0.01)
@@ -780,17 +1013,21 @@ def main() -> None:
     st.markdown(
         "Upload a CCTV frame from an elevator cabin. The system detects "
         "people, strollers, luggage, and boxes; estimates floor occupancy "
-        "with TS EN 81-20 standard footprints; and decides whether the next "
+        "with industry-standard footprints; and decides whether the next "
         "hall call should be **accepted** or **bypassed**."
     )
 
     cfg = render_sidebar()
 
-    tab_single, tab_batch = st.tabs(["Single Frame", "Batch Simulation"])
+    tab_single, tab_batch, tab_timeline = st.tabs(
+        ["Single Frame", "Batch Simulation", "Call Timeline"]
+    )
     with tab_single:
         render_single_frame_tab(cfg)
     with tab_batch:
         render_batch_tab(cfg)
+    with tab_timeline:
+        render_timeline_tab()
 
     # ─── Footer ──────────────────────────────────────────────────────
     st.markdown("---")

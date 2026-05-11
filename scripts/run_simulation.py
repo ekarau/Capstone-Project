@@ -16,8 +16,8 @@ Pipeline
    the head model supplies the person count while the four-class model
    contributes only stroller / luggage / box.
 
-3. Emit a per-image ACCEPT / BYPASS decision via the two-stage policy
-   (PDF Algorithm 1, Andrei & Ruokokoski 2022).
+3. Emit a per-image ACCEPT / BYPASS decision via the two-stage
+   load-and-area policy.
 
 4. Compare against ground truth and tabulate confusion-matrix counts plus
    per-class detection accuracy (mean absolute error of class counts).
@@ -28,7 +28,7 @@ Pipeline
    * **Baseline** — every call accepted (always-stop).
    * **Smart**    — accept iff classifier says not full.
 
-   Energy per stop is taken from ``src.energy.consumption`` (Tukia 2018).
+   Energy per stop comes from ``src.energy.consumption``.
 
 6. Write::
 
@@ -89,44 +89,26 @@ from src.energy.consumption import (
 CLASS_NAMES = ("person", "stroller", "luggage", "box")
 
 CLASS_AREAS_M2: dict[str, float] = {
-    # ISO 8100-32:2020 §6.4 specifies Ap in [0.17, 0.22] m² depending on car
-    # load; EN 81-20:2020 §5.4.2.1.1 cites 0.17 m² for the rated-mass method.
-    # 0.20 m² is the mid-range value used in elevator capacity calculations
-    # (Tukia et al., 2018).
     "person": 0.20,
-    # EN 1888-1:2018 governs single-pushchair safety. Product survey:
-    # Bugaboo Butterfly ≈ 0.22 m², UPPAbaby Vista 91×65 cm ≈ 0.60 m²;
-    # population mean ≈ 0.45 m².
     "stroller": 0.45,
-    # IATA Resolution 753 cabin baggage standard: 56 × 36 × 23 cm →
-    # footprint 0.20 m². Used as the canonical mid-size luggage value.
     "luggage": 0.20,
-    # Industry e-commerce parcel mean ≈ 46 × 41 × 15 cm → footprint
-    # ≈ 0.19 m² (Red Stag Fulfillment, 2026 benchmark).
     "box": 0.20,
 }
 
-# Average mass (kg) per detected object — used by the energy simulation
+# Average mass (kg) per detected object, used by the energy simulation
 # to compute a per-call cabin load instead of a single fixed average.
 CLASS_WEIGHTS_KG: dict[str, float] = {
-    # EN 81-20:2020 / ISO 8100-1 nominate 75 kg as the rated mass per
-    # passenger; Tukia et al. (2018) use the same value.
     "person": 75.0,
-    # Empty single stroller mass ≈ 8–12 kg (UPPAbaby Vista 12 kg, Bugaboo
-    # Butterfly 7 kg); typical occupant child ≈ 10–12 kg. Combined mid-range
-    # ≈ 20 kg.
     "stroller": 20.0,
-    # Cabin baggage IATA limit ≈ 8 kg; checked baggage typically 15–23 kg.
-    # Mixed elevator distribution ≈ 15 kg.
     "luggage": 15.0,
-    # Average e-commerce parcel ≈ 1–3 kg (Red Stag 2026 benchmark); larger
-    # logistics cartons reach 10 kg. Conservative mean ≈ 5 kg.
     "box": 5.0,
 }
 
 DEFAULT_CABIN_M2 = 2.24  # 1.4 × 1.6 m — configs/default.yaml
 DEFAULT_AREA_THRESHOLD = 0.90  # area_bypass_ratio — configs/default.yaml
 DEFAULT_CONF_THRESHOLD = 0.25  # tuned for higher person recall
+DEFAULT_WEIGHT_RATIO = 0.80  # weight_bypass_ratio — configs/default.yaml
+DEFAULT_RATED_LOAD_KG = 630.0  # max_weight_kg — configs/default.yaml
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -143,8 +125,11 @@ class GroundTruth:
     gt_stroller: int
     gt_luggage: int
     gt_box: int
-    gt_is_full: bool
+    gt_is_full: bool  # area-occupancy ≥ area_threshold
     gt_occupancy_ratio: float
+    gt_weight_kg: float  # Σ n_c × CLASS_WEIGHTS_KG (derived from counts)
+    gt_weight_full: bool  # gt_weight_kg ≥ weight_threshold_kg
+    gt_should_bypass: bool  # gt_is_full OR gt_weight_full (optimal-policy ground truth)
 
 
 @dataclass
@@ -157,16 +142,21 @@ class ImageDecision:
     gt_stroller: int
     gt_luggage: int
     gt_box: int
-    gt_is_full: bool
+    gt_is_full: bool  # area-occupancy ≥ area_threshold
     gt_occupancy_ratio: float
+    gt_weight_kg: float
+    gt_weight_full: bool  # gt_weight_kg ≥ weight_threshold_kg
+    gt_should_bypass: bool  # gt_is_full OR gt_weight_full
     # Predictions.
     pred_person: int
     pred_stroller: int
     pred_luggage: int
     pred_box: int
     pred_occupancy_ratio: float
-    pred_is_full: bool
-    # Bypass-decision outcome (TP/TN/FP/FN, image-level).
+    pred_is_full: bool  # area-bypass call from the detector
+    # Bypass-decision outcome (TP/TN/FP/FN), evaluated against gt_should_bypass.
+    # Records the SMART decision (weight gate first, then area gate).
+    smart_bypass: bool  # gt_weight_full OR pred_is_full
     outcome: str
     # Counting-accuracy outcome (independent of the bypass decision).
     counts_exact_match: bool  # pred counts equal GT counts for ALL classes
@@ -183,15 +173,26 @@ def _occupancy_ratio_from_counts(counts: dict[str, int], cabin_m2: float) -> flo
     return min(occ / cabin_m2, 1.0) if cabin_m2 > 0 else 0.0
 
 
+def _cabin_load_kg_from_counts(counts: dict[str, int]) -> float:
+    """Per-image cabin load (kg) from per-class GT counts."""
+    return sum(counts[c] * CLASS_WEIGHTS_KG[c] for c in CLASS_NAMES)
+
+
 def load_ground_truth(
-    csv_path: Path, *, cabin_m2: float, area_threshold: float
+    csv_path: Path,
+    *,
+    cabin_m2: float,
+    area_threshold: float,
+    weight_threshold_kg: float,
 ) -> list[GroundTruth]:
     """Read the per-image ground-truth CSV.
 
     The schema is ``filename, gt_person, gt_stroller, gt_luggage,
     gt_box, gt_is_full``. ``gt_is_full`` is auto-derived when blank:
-    the cabin is considered full when the multi-class occupancy ratio
-    reaches ``area_threshold``.
+    the cabin is considered area-full when the multi-class occupancy
+    ratio reaches ``area_threshold``. The weight-bypass ground truth
+    ``gt_weight_full`` is always derived from the per-class counts and
+    the ``weight_threshold_kg`` value.
     """
     rows: list[GroundTruth] = []
     with open(csv_path, encoding="utf-8") as f:
@@ -209,6 +210,7 @@ def load_ground_truth(
                 "box": int(row.get("gt_box", 0) or 0),
             }
             gt_occ = _occupancy_ratio_from_counts(counts, cabin_m2)
+            gt_weight = _cabin_load_kg_from_counts(counts)
             raw_full = (row.get("gt_is_full", "") or "").strip().lower()
             if raw_full in ("true", "1", "yes", "y"):
                 gt_full = True
@@ -216,6 +218,7 @@ def load_ground_truth(
                 gt_full = False
             else:
                 gt_full = gt_occ >= area_threshold
+            gt_weight_full = gt_weight >= weight_threshold_kg
             rows.append(
                 GroundTruth(
                     filename=row["filename"].strip(),
@@ -225,6 +228,9 @@ def load_ground_truth(
                     gt_box=counts["box"],
                     gt_is_full=gt_full,
                     gt_occupancy_ratio=gt_occ,
+                    gt_weight_kg=gt_weight,
+                    gt_weight_full=gt_weight_full,
+                    gt_should_bypass=gt_full or gt_weight_full,
                 )
             )
     return rows
@@ -235,12 +241,18 @@ def load_ground_truth(
 # ──────────────────────────────────────────────────────────────────────
 
 
-def classify_outcome(gt_full: bool, pred_full: bool) -> str:
-    if gt_full and pred_full:
+def classify_outcome(gt_should_bypass: bool, smart_bypass: bool) -> str:
+    """Classify the smart bypass call against the optimal-policy ground truth.
+
+    Optimal policy bypasses iff the cabin cannot accept another passenger,
+    i.e. iff it is **either** area-full **or** weight-full. Smart bypass
+    is the actual policy decision (weight gate first, then detector area).
+    """
+    if gt_should_bypass and smart_bypass:
         return "TP"
-    if not gt_full and not pred_full:
+    if not gt_should_bypass and not smart_bypass:
         return "TN"
-    if not gt_full and pred_full:
+    if not gt_should_bypass and smart_bypass:
         return "FP"
     return "FN"
 
@@ -312,67 +324,240 @@ def predict_image(
 
 
 @dataclass
+class CallRecord:
+    """One synthetic hall call: who called from where, which cabin state was
+    sampled, what each of the three policies decided, and the per-call
+    energy breakdown.
+
+    Three policies are compared:
+
+    * ``always_accept`` — naive baseline, never bypasses.
+    * ``weight_only``  — current-industry baseline; bypass iff
+      ``gt_weight_kg ≥ weight_threshold_kg`` (Stage 1 of Algorithm 1).
+    * ``smart``        — proposed system; bypass iff weight stage triggers
+      OR detector reports area-full (Stages 1 + 2).
+
+    ``trip_energy_kj`` is the *contextual* full-trip energy (running +
+    auxiliary + door + idle) from Tukia (2018) for the cabin state at
+    that distance and direction. It can be negative for light cabins
+    that move upwards and reclaim energy via regenerative braking.
+
+    ``stop_overhead_kj`` is the strictly-attributable energy cost of
+    the call: the door cycle and idle-stop time the elevator would
+    incur by stopping at that floor. This is what a correct bypass
+    saves (≈ 920 J under our default parameters; load- and direction-
+    independent).
+    """
+
+    call_id: int
+    origin_floor: int
+    dest_floor: int
+    distance_floors: int
+    direction: str  # "up" | "down"
+    filename: str
+    gt_person: int
+    gt_stroller: int
+    gt_luggage: int
+    gt_box: int
+    gt_weight_kg: float
+    gt_is_full: bool
+    gt_weight_full: bool
+    gt_should_bypass: bool
+    pred_is_full: bool
+    weight_only_decision: str  # "accept" | "bypass"
+    smart_decision: str  # "accept" | "bypass"
+    outcome: str  # "TP" | "TN" | "FP" | "FN" — smart vs gt_should_bypass
+    trip_energy_kj: float  # full Tukia trip energy (context)
+    stop_overhead_kj: float  # door + idle at this floor (the saving target)
+    cumulative_always_accept_kj: float
+    cumulative_weight_only_kj: float
+    cumulative_smart_kj: float
+
+
+@dataclass
 class SimulationStats:
     num_calls: int = 0
-    baseline_total_j: float = 0.0
-    smart_total_j: float = 0.0
+    # Energy attribution (overhead-only convention) for three policies.
+    always_accept_total_j: float = 0.0  # naive baseline — never bypass
+    weight_only_total_j: float = 0.0  # current-industry — Stage 1 only
+    smart_total_j: float = 0.0  # proposed — Stage 1 + Stage 2
+    # Smart-policy outcome attribution (against gt_should_bypass).
+    smart_wasted_j: float = 0.0  # FN: stopped at a cabin that should bypass
+    smart_saved_correctly_j: float = 0.0  # TP: correctly bypassed
+    smart_lost_savings_j: float = 0.0  # energy that COULD have been saved on FN cases
+    # Time attribution (per-stop time overhead; Barney 2003 / ISO 25745-2).
+    always_accept_total_time_s: float = 0.0
+    weight_only_total_time_s: float = 0.0
+    smart_total_time_s: float = 0.0
+    smart_wasted_time_s: float = 0.0
+    # Decision counters per policy.
+    weight_only_bypassed: int = 0
+    weight_only_accepted: int = 0
     smart_bypassed: int = 0
     smart_accepted: int = 0
-    mean_load_kg: float = 0.0  # average per-call cabin load
+    # Smart vs ground-truth confusion (gt_should_bypass).
+    smart_correct_bypass: int = 0  # TP
+    smart_correct_accept: int = 0  # TN
+    smart_wrong_bypass: int = 0  # FP — bypassed cabin that had room
+    smart_wrong_accept: int = 0  # FN — accepted cabin that should have bypassed
+    # Trip statistics.
+    mean_load_kg: float = 0.0
+    mean_distance_floors: float = 0.0
     by_outcome: dict[str, int] = field(default_factory=dict)
-
-
-def _cabin_load_kg(d: ImageDecision) -> float:
-    """Per-call cabin load (kg) derived from the GT counts and the
-    literature-anchored mass values in CLASS_WEIGHTS_KG."""
-    return (
-        d.gt_person * CLASS_WEIGHTS_KG["person"]
-        + d.gt_stroller * CLASS_WEIGHTS_KG["stroller"]
-        + d.gt_luggage * CLASS_WEIGHTS_KG["luggage"]
-        + d.gt_box * CLASS_WEIGHTS_KG["box"]
-    )
+    # Per-call log (one row per synthetic hall call).
+    call_log: list[CallRecord] = field(default_factory=list)
 
 
 def simulate_calls(
     decisions: list[ImageDecision],
     *,
     num_calls: int,
-    avg_floors_per_trip: float,
+    floors_count: int,
     energy_params: EnergyParams,
     seed: int = 42,
 ) -> SimulationStats:
-    """Sample ``num_calls`` synthetic hall calls and tally energy.
+    """Sample ``num_calls`` synthetic hall calls and tally per-policy energy
+    and service-quality statistics for the three policies under study.
 
-    Each call draws a labeled cabin state uniformly at random from the
-    benchmark. The energy cost of accepting that call is computed from
-    the *actual* cabin load (people + strollers + luggage + boxes), not
-    from a fixed average — so heavier cabins cost proportionally more
-    motor energy per stop. Both policies use the same per-call energy
-    when they accept; the only difference is which calls each policy
-    bypasses.
+    Three policies share the same call stream:
+
+    * **always_accept** — naive baseline: every call pays the per-stop
+      overhead. This isolates "what does an unguarded elevator cost".
+    * **weight_only**   — current-industry baseline: bypass iff the
+      cabin's load (derived from GT counts × CLASS_WEIGHTS_KG) exceeds
+      the weight threshold. This is Stage 1 of Algorithm 1, on its own.
+    * **smart**         — proposed system: weight gate first, then the
+      detector's area-occupancy gate. Stages 1 + 2 of Algorithm 1.
+
+    Energy accounting follows the *overhead-only* convention: each call
+    represents a request to **stop at one intermediate floor**. The
+    strictly attributable energy of the call is the door cycle plus
+    idle-stop time at that floor (≈ 920 J under the default Tukia 2018
+    parameters, load- and direction-independent). A correct bypass at
+    a floor saves exactly this overhead; the trip's running energy is
+    shared with other accepted calls and is therefore not credited to
+    the bypass decision.
+
+    The full Tukia trip energy is still recorded in
+    ``CallRecord.trip_energy_kj`` for context.
+
+    The smart-policy decision is evaluated against the **optimal
+    ground-truth policy** (``gt_should_bypass = gt_is_full OR
+    gt_weight_full``), giving the TP / TN / FP / FN counts.
     """
     rng = random.Random(seed)
     stats = SimulationStats(num_calls=num_calls)
-    floors = max(1, round(avg_floors_per_trip))
+
+    # Stop-overhead energy is constant: door cycle (open + close) plus the
+    # idle wait while the cabin sits at the floor. Load and direction do
+    # not enter — they affect only the running energy, which is shared
+    # between policies for any given trip.
+    e_overhead_per_stop = (
+        energy_params.power_doors_w * energy_params.door_open_close_time_s * 2
+        + (energy_params.power_idle_w + energy_params.power_control_w) * energy_params.stop_time_s
+    )
+    # Stop-overhead time is also constant: door open + door close + idle
+    # transfer (passenger boarding). Defaults give 10 s, matching the
+    # 10–15 s per intermediate stop reported in Barney (2003), Strakosch
+    # & Caporale (2010), and adopted by ISO 25745-2.
+    t_overhead_per_stop = energy_params.door_open_close_time_s * 2 + energy_params.stop_time_s
 
     total_load_kg = 0.0
-    for _ in range(num_calls):
+    total_distance = 0.0
+    for call_id in range(1, num_calls + 1):
         d = rng.choice(decisions)
-        load_kg = _cabin_load_kg(d)
+        load_kg = d.gt_weight_kg
         total_load_kg += load_kg
-        e_stop = estimate_stop_energy(
-            StartProfile(load_kg=load_kg, floors_traveled=floors, direction_up=True),
+
+        # Sample the call's origin and destination floors.
+        origin = rng.randint(1, floors_count)
+        dest = rng.randint(1, floors_count)
+        while dest == origin:
+            dest = rng.randint(1, floors_count)
+        distance_floors = abs(dest - origin)
+        direction_up = dest > origin
+        total_distance += distance_floors
+
+        # Full-trip energy (Tukia 2018) — contextual only; not credited
+        # to the bypass decision.
+        e_trip_total = estimate_stop_energy(
+            StartProfile(
+                load_kg=load_kg,
+                floors_traveled=distance_floors,
+                direction_up=direction_up,
+            ),
             energy_params,
         )["total_j"]
-        stats.baseline_total_j += e_stop
-        if d.pred_is_full:
-            stats.smart_bypassed += 1
+
+        # ── Policy 1 — Always-accept (naive baseline). ──────────────
+        stats.always_accept_total_j += e_overhead_per_stop
+        stats.always_accept_total_time_s += t_overhead_per_stop
+
+        # ── Policy 2 — Weight-only (current-industry baseline). ─────
+        if d.gt_weight_full:
+            stats.weight_only_bypassed += 1
+            weight_only_decision = "bypass"
         else:
-            stats.smart_total_j += e_stop
+            stats.weight_only_total_j += e_overhead_per_stop
+            stats.weight_only_total_time_s += t_overhead_per_stop
+            stats.weight_only_accepted += 1
+            weight_only_decision = "accept"
+
+        # ── Policy 3 — Smart (Algorithm 1: weight gate, then area). ─
+        smart_bypass = d.smart_bypass  # gt_weight_full OR pred_is_full
+        if smart_bypass:
+            stats.smart_bypassed += 1
+            smart_decision = "bypass"
+            if d.gt_should_bypass:
+                stats.smart_correct_bypass += 1
+                stats.smart_saved_correctly_j += e_overhead_per_stop
+            else:
+                stats.smart_wrong_bypass += 1
+        else:
+            stats.smart_total_j += e_overhead_per_stop
+            stats.smart_total_time_s += t_overhead_per_stop
             stats.smart_accepted += 1
+            smart_decision = "accept"
+            if d.gt_should_bypass:
+                stats.smart_wrong_accept += 1
+                stats.smart_wasted_j += e_overhead_per_stop
+                stats.smart_lost_savings_j += e_overhead_per_stop
+                stats.smart_wasted_time_s += t_overhead_per_stop
+            else:
+                stats.smart_correct_accept += 1
+
         stats.by_outcome[d.outcome] = stats.by_outcome.get(d.outcome, 0) + 1
 
+        stats.call_log.append(
+            CallRecord(
+                call_id=call_id,
+                origin_floor=origin,
+                dest_floor=dest,
+                distance_floors=distance_floors,
+                direction="up" if direction_up else "down",
+                filename=d.filename,
+                gt_person=d.gt_person,
+                gt_stroller=d.gt_stroller,
+                gt_luggage=d.gt_luggage,
+                gt_box=d.gt_box,
+                gt_weight_kg=d.gt_weight_kg,
+                gt_is_full=d.gt_is_full,
+                gt_weight_full=d.gt_weight_full,
+                gt_should_bypass=d.gt_should_bypass,
+                pred_is_full=d.pred_is_full,
+                weight_only_decision=weight_only_decision,
+                smart_decision=smart_decision,
+                outcome=d.outcome,
+                trip_energy_kj=e_trip_total / 1000.0,
+                stop_overhead_kj=e_overhead_per_stop / 1000.0,
+                cumulative_always_accept_kj=stats.always_accept_total_j / 1000.0,
+                cumulative_weight_only_kj=stats.weight_only_total_j / 1000.0,
+                cumulative_smart_kj=stats.smart_total_j / 1000.0,
+            )
+        )
+
     stats.mean_load_kg = total_load_kg / max(1, num_calls)
+    stats.mean_distance_floors = total_distance / max(1, num_calls)
     return stats
 
 
@@ -382,6 +567,12 @@ def simulate_calls(
 
 
 def precision_recall(decisions: list[ImageDecision]) -> dict[str, float]:
+    """Smart-policy bypass metrics, evaluated against ``gt_should_bypass``.
+
+    Outcomes are stored on ``ImageDecision.outcome`` and were classified
+    by :func:`classify_outcome` from ``gt_should_bypass`` and the
+    smart-policy decision (``gt_weight_full OR pred_is_full``).
+    """
     tp = sum(1 for d in decisions if d.outcome == "TP")
     fp = sum(1 for d in decisions if d.outcome == "FP")
     fn = sum(1 for d in decisions if d.outcome == "FN")
@@ -400,6 +591,31 @@ def precision_recall(decisions: list[ImageDecision]) -> dict[str, float]:
         "accuracy": accuracy,
         "f1": f1,
     }
+
+
+def per_image_csv_columns() -> list[str]:
+    return [
+        "filename",
+        "gt_person",
+        "gt_stroller",
+        "gt_luggage",
+        "gt_box",
+        "gt_weight_kg",
+        "gt_weight_full",
+        "gt_is_full",
+        "gt_should_bypass",
+        "gt_occupancy_ratio",
+        "pred_person",
+        "pred_stroller",
+        "pred_luggage",
+        "pred_box",
+        "pred_is_full",
+        "pred_occupancy_ratio",
+        "smart_bypass",
+        "outcome",
+        "counts_exact_match",
+        "count_total_error",
+    ]
 
 
 def per_class_count_metrics(decisions: list[ImageDecision]) -> dict[str, dict[str, float]]:
@@ -459,26 +675,7 @@ def render_confusion_matrix_png(decisions: list[ImageDecision], out_path: Path) 
 def write_per_image_csv(decisions: list[ImageDecision], out_path: Path) -> None:
     with open(out_path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(
-            [
-                "filename",
-                "gt_person",
-                "gt_stroller",
-                "gt_luggage",
-                "gt_box",
-                "gt_is_full",
-                "gt_occupancy_ratio",
-                "pred_person",
-                "pred_stroller",
-                "pred_luggage",
-                "pred_box",
-                "pred_is_full",
-                "pred_occupancy_ratio",
-                "outcome",
-                "counts_exact_match",
-                "count_total_error",
-            ]
-        )
+        w.writerow(per_image_csv_columns())
         for d in decisions:
             w.writerow(
                 [
@@ -487,7 +684,10 @@ def write_per_image_csv(decisions: list[ImageDecision], out_path: Path) -> None:
                     d.gt_stroller,
                     d.gt_luggage,
                     d.gt_box,
+                    f"{d.gt_weight_kg:.1f}",
+                    d.gt_weight_full,
                     d.gt_is_full,
+                    d.gt_should_bypass,
                     f"{d.gt_occupancy_ratio:.4f}",
                     d.pred_person,
                     d.pred_stroller,
@@ -495,6 +695,7 @@ def write_per_image_csv(decisions: list[ImageDecision], out_path: Path) -> None:
                     d.pred_box,
                     d.pred_is_full,
                     f"{d.pred_occupancy_ratio:.4f}",
+                    d.smart_bypass,
                     d.outcome,
                     d.counts_exact_match,
                     d.count_total_error,
@@ -519,18 +720,125 @@ def write_per_class_csv(class_metrics: dict[str, dict], out_path: Path) -> None:
             )
 
 
+def write_call_log_csv(stats: SimulationStats, out_path: Path) -> None:
+    """One row per synthetic hall call — for the timeline view in the demo."""
+    with open(out_path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(
+            [
+                "call_id",
+                "origin_floor",
+                "dest_floor",
+                "distance_floors",
+                "direction",
+                "filename",
+                "gt_person",
+                "gt_stroller",
+                "gt_luggage",
+                "gt_box",
+                "gt_weight_kg",
+                "gt_weight_full",
+                "gt_is_full",
+                "gt_should_bypass",
+                "pred_is_full",
+                "weight_only_decision",
+                "smart_decision",
+                "outcome",
+                "trip_energy_kj",
+                "stop_overhead_kj",
+                "cumulative_always_accept_kj",
+                "cumulative_weight_only_kj",
+                "cumulative_smart_kj",
+            ]
+        )
+        for c in stats.call_log:
+            w.writerow(
+                [
+                    c.call_id,
+                    c.origin_floor,
+                    c.dest_floor,
+                    c.distance_floors,
+                    c.direction,
+                    c.filename,
+                    c.gt_person,
+                    c.gt_stroller,
+                    c.gt_luggage,
+                    c.gt_box,
+                    f"{c.gt_weight_kg:.1f}",
+                    c.gt_weight_full,
+                    c.gt_is_full,
+                    c.gt_should_bypass,
+                    c.pred_is_full,
+                    c.weight_only_decision,
+                    c.smart_decision,
+                    c.outcome,
+                    f"{c.trip_energy_kj:.4f}",
+                    f"{c.stop_overhead_kj:.4f}",
+                    f"{c.cumulative_always_accept_kj:.4f}",
+                    f"{c.cumulative_weight_only_kj:.4f}",
+                    f"{c.cumulative_smart_kj:.4f}",
+                ]
+            )
+
+
 def write_energy_csv(stats: SimulationStats, out_path: Path) -> None:
-    saved_j = stats.baseline_total_j - stats.smart_total_j
-    saved_pct = 100.0 * saved_j / stats.baseline_total_j if stats.baseline_total_j else 0.0
+    """Write per-policy energy / time aggregates.
+
+    Reports three policies side-by-side:
+      * always_accept (naive baseline, never bypasses)
+      * weight_only  (current-industry, Stage 1 only)
+      * smart        (proposed, Stages 1 + 2)
+
+    Two deltas are recorded:
+      * smart_vs_always   — ceiling tasarrufu (max teorik fayda)
+      * smart_vs_weight   — bizim gerçek katkımız (over current industry)
+    """
+    aa_j = stats.always_accept_total_j
+    wo_j = stats.weight_only_total_j
+    sm_j = stats.smart_total_j
+
+    aa_t = stats.always_accept_total_time_s
+    wo_t = stats.weight_only_total_time_s
+    sm_t = stats.smart_total_time_s
+
+    saved_vs_aa_j = aa_j - sm_j
+    saved_vs_wo_j = wo_j - sm_j
+    saved_vs_aa_pct = 100.0 * saved_vs_aa_j / aa_j if aa_j else 0.0
+    saved_vs_wo_pct = 100.0 * saved_vs_wo_j / wo_j if wo_j else 0.0
+
+    saved_vs_aa_s = aa_t - sm_t
+    saved_vs_wo_s = wo_t - sm_t
+    saved_vs_aa_t_pct = 100.0 * saved_vs_aa_s / aa_t if aa_t else 0.0
+    saved_vs_wo_t_pct = 100.0 * saved_vs_wo_s / wo_t if wo_t else 0.0
+
     with open(out_path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["metric", "value"])
         w.writerow(["num_calls", stats.num_calls])
-        w.writerow(["baseline_total_kj", f"{stats.baseline_total_j / 1000:.2f}"])
-        w.writerow(["smart_total_kj", f"{stats.smart_total_j / 1000:.2f}"])
-        w.writerow(["energy_saved_kj", f"{saved_j / 1000:.2f}"])
-        w.writerow(["energy_saved_kwh", f"{saved_j / 3_600_000:.4f}"])
-        w.writerow(["energy_saved_pct", f"{saved_pct:.2f}"])
+        # ── Per-policy energy totals ──
+        w.writerow(["always_accept_total_kj", f"{aa_j / 1000:.2f}"])
+        w.writerow(["weight_only_total_kj", f"{wo_j / 1000:.2f}"])
+        w.writerow(["smart_total_kj", f"{sm_j / 1000:.2f}"])
+        # ── Energy savings (smart over the two baselines) ──
+        w.writerow(["energy_saved_vs_always_accept_kj", f"{saved_vs_aa_j / 1000:.2f}"])
+        w.writerow(["energy_saved_vs_always_accept_kwh", f"{saved_vs_aa_j / 3_600_000:.4f}"])
+        w.writerow(["energy_saved_vs_always_accept_pct", f"{saved_vs_aa_pct:.2f}"])
+        w.writerow(["energy_saved_vs_weight_only_kj", f"{saved_vs_wo_j / 1000:.2f}"])
+        w.writerow(["energy_saved_vs_weight_only_kwh", f"{saved_vs_wo_j / 3_600_000:.4f}"])
+        w.writerow(["energy_saved_vs_weight_only_pct", f"{saved_vs_wo_pct:.2f}"])
+        # ── Per-policy time totals ──
+        w.writerow(["always_accept_total_time_s", f"{aa_t:.1f}"])
+        w.writerow(["weight_only_total_time_s", f"{wo_t:.1f}"])
+        w.writerow(["smart_total_time_s", f"{sm_t:.1f}"])
+        w.writerow(["time_saved_vs_always_accept_s", f"{saved_vs_aa_s:.1f}"])
+        w.writerow(["time_saved_vs_always_accept_min", f"{saved_vs_aa_s / 60:.2f}"])
+        w.writerow(["time_saved_vs_always_accept_pct", f"{saved_vs_aa_t_pct:.2f}"])
+        w.writerow(["time_saved_vs_weight_only_s", f"{saved_vs_wo_s:.1f}"])
+        w.writerow(["time_saved_vs_weight_only_min", f"{saved_vs_wo_s / 60:.2f}"])
+        w.writerow(["time_saved_vs_weight_only_pct", f"{saved_vs_wo_t_pct:.2f}"])
+        # ── Per-policy bypass counts ──
+        w.writerow(["weight_only_bypassed_calls", stats.weight_only_bypassed])
+        w.writerow(["weight_only_accepted_calls", stats.weight_only_accepted])
         w.writerow(["smart_bypassed_calls", stats.smart_bypassed])
         w.writerow(["smart_accepted_calls", stats.smart_accepted])
 
@@ -543,12 +851,13 @@ def write_markdown_report(
     args: argparse.Namespace,
     out_path: Path,
 ) -> None:
-    saved_kj = (stats.baseline_total_j - stats.smart_total_j) / 1000
-    saved_pct = (
-        100.0 * (stats.baseline_total_j - stats.smart_total_j) / stats.baseline_total_j
-        if stats.baseline_total_j
-        else 0.0
-    )
+    aa_kj = stats.always_accept_total_j / 1000
+    wo_kj = stats.weight_only_total_j / 1000
+    sm_kj = stats.smart_total_j / 1000
+    saved_vs_aa_kj = aa_kj - sm_kj
+    saved_vs_wo_kj = wo_kj - sm_kj
+    saved_vs_aa_pct = 100.0 * saved_vs_aa_kj / aa_kj if aa_kj else 0.0
+    saved_vs_wo_pct = 100.0 * saved_vs_wo_kj / wo_kj if wo_kj else 0.0
     mode = "hybrid" if args.head_weights else "single-model"
 
     lines: list[str] = []
@@ -560,37 +869,45 @@ def write_markdown_report(
     if args.head_weights:
         lines.append(f"- Head weights: `{args.head_weights}`")
     lines.append(f"- Rated capacity: **{args.rated_capacity} persons**")
+    lines.append(f"- Rated load: **{args.rated_load_kg:.0f} kg**")
     lines.append(f"- Cabin floor area: **{args.cabin_m2:.2f} m²**")
     lines.append(f"- Confidence threshold: {args.conf_threshold:.2f}")
-    lines.append(f"- Area bypass threshold: {args.area_threshold:.2f}")
+    lines.append(f"- Area bypass threshold (τ_A): {args.area_threshold:.2f}")
+    lines.append(
+        f"- Weight bypass threshold (τ_W): {args.weight_bypass_ratio:.2f} "
+        f"× {args.rated_load_kg:.0f} kg = "
+        f"**{args.weight_bypass_ratio * args.rated_load_kg:.0f} kg**"
+    )
     lines.append(f"- Synthetic hall calls: **{args.num_calls}**")
-    lines.append(f"- Avg floors per trip: {args.avg_floors}")
+    lines.append(f"- Building height: {args.floors_count} floors (random origin / destination)")
+    lines.append(f"- Mean trip distance: {stats.mean_distance_floors:.1f} floors")
     lines.append(f"- Mean per-call cabin load (dynamic): **{stats.mean_load_kg:.0f} kg**")
     lines.append("")
-    lines.append("### Per-class object masses (literature-anchored)\n")
-    lines.append("| Class | Mass (kg) | Source |")
-    lines.append("|---|:---:|---|")
-    lines.append("| person   | 75 | EN 81-20:2020 / ISO 8100-1 rated mass per passenger |")
-    lines.append(
-        "| stroller | 20 | Empty single stroller 7-12 kg + child 10-12 kg "
-        "(EN 1888-1:2018 + product survey) |"
-    )
-    lines.append(
-        "| luggage  | 15 | Cabin baggage IATA limit ~8 kg, "
-        "checked baggage 15-23 kg; mixed mean ~15 kg |"
-    )
-    lines.append(
-        "| box      |  5 | E-commerce parcel mean 1-3 kg; "
-        "logistics carton up to 10 kg (Red Stag 2026) |"
-    )
+    lines.append("### Per-class object masses\n")
+    lines.append("| Class | Mass (kg) |")
+    lines.append("|---|:---:|")
+    lines.append("| person   | 75 |")
+    lines.append("| stroller | 20 |")
+    lines.append("| luggage  | 15 |")
+    lines.append("| box      |  5 |")
     lines.append("")
 
-    lines.append("## Accuracy 1 — Bypass decision (image-level)\n")
-    lines.append("How often the system makes the correct accept / bypass call.\n")
-    lines.append("|  | Predicted: not full | Predicted: full |")
+    lines.append("## Accuracy 1 — Smart bypass decision (image-level)\n")
+    lines.append(
+        "How often the smart policy (Stage 1 weight gate **plus** Stage 2 "
+        "area gate) makes the correct accept / bypass call. Ground truth "
+        "is `gt_should_bypass = gt_is_full OR gt_weight_full`, i.e. the "
+        "optimal policy that bypasses iff the cabin can no longer accept "
+        "another passenger.\n"
+    )
+    lines.append("|  | Smart: accept | Smart: bypass |")
     lines.append("|---|:---:|:---:|")
-    lines.append(f"| **GT: not full** | {metrics['tn']} (TN) | {metrics['fp']} (FP) |")
-    lines.append(f"| **GT: full**     | {metrics['fn']} (FN) | {metrics['tp']} (TP) |")
+    lines.append(
+        f"| **GT: should accept** | {metrics['tn']} (TN) | {metrics['fp']} (FP) |"
+    )
+    lines.append(
+        f"| **GT: should bypass** | {metrics['fn']} (FN) | {metrics['tp']} (TP) |"
+    )
     lines.append("")
     lines.append(f"- **Bypass accuracy**:  {metrics['accuracy']:.3f}")
     lines.append(f"- Bypass precision:    {metrics['precision']:.3f}")
@@ -634,30 +951,149 @@ def write_markdown_report(
     )
     lines.append("")
 
-    lines.append("## Energy aggregates (synthetic day)\n")
-    lines.append(f"- Baseline (always-accept): **{stats.baseline_total_j / 1000:.1f} kJ**")
-    lines.append(f"- Smart (vision-gated):     **{stats.smart_total_j / 1000:.1f} kJ**")
+    lines.append("## Energy aggregates (stop-overhead accounting)\n")
     lines.append(
-        f"- **Energy saved**: {saved_kj:.1f} kJ "
-        f"({saved_kj / 3600:.3f} kWh) — **{saved_pct:.1f}%** of baseline"
+        "Each accepted call adds the per-stop overhead (door cycle + idle "
+        "wait) at the called floor; bypass at a floor saves exactly this "
+        "overhead. The trip's running energy is shared with other accepted "
+        "calls and is therefore not credited to the bypass decision. See "
+        "the call log for the per-call full Tukia (2018) trip energy.\n"
+    )
+    lines.append("Three policies are compared on the same 1 000-call stream:\n")
+    lines.append("| Policy | Bypassed | Accepted | Total energy | Δ vs always-accept | Δ vs weight-only |")
+    lines.append("|---|:---:|:---:|:---:|:---:|:---:|")
+    lines.append(
+        f"| Always-accept (naive) | 0 | {stats.num_calls} | "
+        f"**{aa_kj:.1f} kJ** | — | — |"
+    )
+    lines.append(
+        f"| Weight-only (current industry) | {stats.weight_only_bypassed} | "
+        f"{stats.weight_only_accepted} | **{wo_kj:.1f} kJ** | "
+        f"{aa_kj - wo_kj:.1f} kJ "
+        f"({100.0 * (aa_kj - wo_kj) / aa_kj if aa_kj else 0:.1f}%) | — |"
+    )
+    lines.append(
+        f"| **Smart (proposed)** | {stats.smart_bypassed} | "
+        f"{stats.smart_accepted} | **{sm_kj:.1f} kJ** | "
+        f"**{saved_vs_aa_kj:.1f} kJ ({saved_vs_aa_pct:.1f}%)** | "
+        f"**{saved_vs_wo_kj:.1f} kJ ({saved_vs_wo_pct:.1f}%)** |"
+    )
+    lines.append("")
+    lines.append(
+        f"- The headline result is **smart vs weight-only**: "
+        f"**{saved_vs_wo_kj:.1f} kJ ({saved_vs_wo_pct:.1f} %)** of "
+        "additional savings on top of what a load-cell-only system "
+        "already achieves."
     )
     lines.append(
         f"- Smart bypassed {stats.smart_bypassed} of {stats.num_calls} calls "
-        f"({100 * stats.smart_bypassed / max(1, stats.num_calls):.1f}%)"
+        f"({100 * stats.smart_bypassed / max(1, stats.num_calls):.1f}%); "
+        f"of these {stats.smart_correct_bypass} were correct (TP) and "
+        f"{stats.smart_wrong_bypass} were premature (FP)."
+    )
+    lines.append("")
+
+    # ── Service quality (operational consequences of misclassifications) ──
+    n = stats.num_calls
+    # FP cases mean the passenger was *incorrectly* skipped — they were not served.
+    service_rate = (n - stats.smart_wrong_bypass) / max(1, n)
+    lines.append("## Service quality\n")
+    lines.append(
+        "Beyond raw energy, every misclassification has an operational "
+        "consequence — a passenger who waits, or a stop where nobody fits. "
+        "The four outcome classes are tallied below.\n"
+    )
+    lines.append("| Outcome | Count | Operational meaning |")
+    lines.append("|---|:---:|---|")
+    lines.append(
+        f"| ✅ TP — correct bypass | {stats.smart_correct_bypass} | "
+        f"Cabin was full, smart skipped it (saved {stats.smart_saved_correctly_j / 1000:.1f} kJ) |"
+    )
+    lines.append(
+        f"| ✅ TN — correct accept | {stats.smart_correct_accept} | "
+        f"Cabin had room, smart stopped (normal service) |"
+    )
+    lines.append(
+        f"| ⚠ FP — wrong bypass    | {stats.smart_wrong_bypass} | "
+        f"Cabin had room but smart skipped it: passenger waits |"
+    )
+    lines.append(
+        f"| ❌ FN — wrong accept    | {stats.smart_wrong_accept} | "
+        f"Cabin was full but smart stopped: wasted "
+        f"{stats.smart_wasted_j / 1000:.1f} kJ on a useless stop |"
+    )
+    lines.append("")
+    lines.append(
+        f"- **Service rate** (calls served / total): "
+        f"**{100 * service_rate:.1f}%**  "
+        f"(baseline always reaches 100%)"
+    )
+    lines.append(
+        f"- Wasted-stop energy (FN): **{stats.smart_wasted_j / 1000:.1f} kJ** "
+        f"({100 * stats.smart_wasted_j / max(1.0, stats.smart_total_j):.1f}% of "
+        f"smart total)"
+    )
+    lines.append(
+        f"- Energy saved on correct bypasses (TP): {stats.smart_saved_correctly_j / 1000:.1f} kJ"
+    )
+    lines.append(
+        f"- Mean trip distance: **{stats.mean_distance_floors:.1f}** floors  "
+        f"(building has {args.floors_count} floors)"
+    )
+    lines.append("")
+
+    # ── Time aggregates (stop-time accounting) ───────────────────────
+    aa_s = stats.always_accept_total_time_s
+    wo_s = stats.weight_only_total_time_s
+    sm_s = stats.smart_total_time_s
+    saved_vs_aa_t = aa_s - sm_s
+    saved_vs_wo_t = wo_s - sm_s
+    saved_vs_aa_t_pct = 100.0 * saved_vs_aa_t / aa_s if aa_s else 0.0
+    saved_vs_wo_t_pct = 100.0 * saved_vs_wo_t / wo_s if wo_s else 0.0
+    per_stop_s = aa_s / max(1, stats.num_calls)
+    lines.append("## Time aggregates (stop-time accounting)\n")
+    lines.append(
+        "Each avoided stop also recovers wall-clock time. Per-stop time "
+        f"overhead under our default Tukia (2018) parameters is **{per_stop_s:.1f} s "
+        "= door open + door close + idle transfer**. This matches the "
+        "10-15 s per intermediate stop reported in Barney (2003), "
+        "Strakosch & Caporale (2010), and the time-cycle definitions of "
+        "ISO 25745-2.\n"
+    )
+    lines.append("| Policy | Total stop-time | Δ vs always-accept | Δ vs weight-only |")
+    lines.append("|---|:---:|:---:|:---:|")
+    lines.append(f"| Always-accept | **{aa_s:.0f} s** ({aa_s / 60:.1f} min) | — | — |")
+    lines.append(
+        f"| Weight-only | **{wo_s:.0f} s** ({wo_s / 60:.1f} min) | "
+        f"{aa_s - wo_s:.0f} s ({100.0 * (aa_s - wo_s) / aa_s if aa_s else 0:.1f}%) | — |"
+    )
+    lines.append(
+        f"| **Smart** | **{sm_s:.0f} s** ({sm_s / 60:.1f} min) | "
+        f"**{saved_vs_aa_t:.0f} s ({saved_vs_aa_t_pct:.1f}%)** | "
+        f"**{saved_vs_wo_t:.0f} s ({saved_vs_wo_t_pct:.1f}%)** |"
+    )
+    lines.append("")
+    lines.append(
+        f"- Time wasted on FN stops: **{stats.smart_wasted_time_s:.0f} s** "
+        f"(elevator opened doors at cabins that should have been bypassed)"
     )
     lines.append("")
 
     lines.append("## Per-image decisions\n")
     lines.append(
-        "| filename | gt(p/s/l/b) | gt_full | gt_occ | pred(p/s/l/b) | pred_full | pred_occ | outcome |"
+        "| filename | gt(p/s/l/b) | gt_kg | gt_W | gt_A | gt_BP | pred(p/s/l/b) | pred_A | smart_BP | outcome |"
     )
-    lines.append("|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|")
+    lines.append("|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|")
     for d in decisions:
         gt = f"{d.gt_person}/{d.gt_stroller}/{d.gt_luggage}/{d.gt_box}"
         pr = f"{d.pred_person}/{d.pred_stroller}/{d.pred_luggage}/{d.pred_box}"
         lines.append(
-            f"| {d.filename} | {gt} | {d.gt_is_full} | {d.gt_occupancy_ratio:.2f} | "
-            f"{pr} | {d.pred_is_full} | {d.pred_occupancy_ratio:.2f} | {d.outcome} |"
+            f"| {d.filename} | {gt} | {d.gt_weight_kg:.0f} | "
+            f"{'Y' if d.gt_weight_full else 'n'} | "
+            f"{'Y' if d.gt_is_full else 'n'} | "
+            f"{'Y' if d.gt_should_bypass else 'n'} | "
+            f"{pr} | {'Y' if d.pred_is_full else 'n'} | "
+            f"{'Y' if d.smart_bypass else 'n'} | {d.outcome} |"
         )
     out_path.write_text("\n".join(lines), encoding="utf-8")
 
@@ -685,8 +1121,28 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--cabin-m2", type=float, default=DEFAULT_CABIN_M2)
     p.add_argument("--area-threshold", type=float, default=DEFAULT_AREA_THRESHOLD)
     p.add_argument("--conf-threshold", type=float, default=DEFAULT_CONF_THRESHOLD)
+    p.add_argument(
+        "--rated-load-kg",
+        type=float,
+        default=DEFAULT_RATED_LOAD_KG,
+        help="Rated cabin load (kg). Default 630 kg matches configs/default.yaml.",
+    )
+    p.add_argument(
+        "--weight-bypass-ratio",
+        type=float,
+        default=DEFAULT_WEIGHT_RATIO,
+        help="Stage-1 weight gate threshold as a fraction of rated load. "
+        "Default 0.80, i.e. bypass when cabin load ≥ 80%% of rated.",
+    )
     p.add_argument("--num-calls", type=int, default=1000)
-    p.add_argument("--avg-floors", type=float, default=3.0)
+    p.add_argument(
+        "--floors-count",
+        type=int,
+        default=10,
+        help="Number of floors in the synthetic building. Each call's "
+        "origin and destination are sampled uniformly at random in "
+        "[1, floors_count].",
+    )
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--output", type=Path, default=Path("results/simulation"))
     p.add_argument(
@@ -708,10 +1164,13 @@ def main() -> int:
         print(f"[error] weights file not found: {args.weights}", file=sys.stderr)
         return 2
 
+    weight_threshold_kg = args.weight_bypass_ratio * args.rated_load_kg
+
     gt_rows = load_ground_truth(
         args.ground_truth,
         cabin_m2=args.cabin_m2,
         area_threshold=args.area_threshold,
+        weight_threshold_kg=weight_threshold_kg,
     )
     if not gt_rows:
         print("[error] ground-truth CSV has no rows.", file=sys.stderr)
@@ -758,7 +1217,8 @@ def main() -> int:
             save_pred_to=save_pred_to,
             save_head_pred_to=save_head_pred_to,
         )
-        outcome = classify_outcome(gt.gt_is_full, pred_full)
+        smart_bypass = gt.gt_weight_full or pred_full
+        outcome = classify_outcome(gt.gt_should_bypass, smart_bypass)
         gt_counts = {
             "person": gt.gt_person,
             "stroller": gt.gt_stroller,
@@ -776,12 +1236,16 @@ def main() -> int:
                 gt_box=gt.gt_box,
                 gt_is_full=gt.gt_is_full,
                 gt_occupancy_ratio=gt.gt_occupancy_ratio,
+                gt_weight_kg=gt.gt_weight_kg,
+                gt_weight_full=gt.gt_weight_full,
+                gt_should_bypass=gt.gt_should_bypass,
                 pred_person=pred_counts["person"],
                 pred_stroller=pred_counts["stroller"],
                 pred_luggage=pred_counts["luggage"],
                 pred_box=pred_counts["box"],
                 pred_occupancy_ratio=pred_occ,
                 pred_is_full=pred_full,
+                smart_bypass=smart_bypass,
                 outcome=outcome,
                 counts_exact_match=counts_exact_match,
                 count_total_error=count_total_error,
@@ -790,11 +1254,12 @@ def main() -> int:
         print(
             f"  {gt.filename:<48} "
             f"GT(p/s/l/b)={gt.gt_person}/{gt.gt_stroller}/"
-            f"{gt.gt_luggage}/{gt.gt_box} occ={gt.gt_occupancy_ratio:.2f} "
-            f"{'F' if gt.gt_is_full else 'N':<2}  "
+            f"{gt.gt_luggage}/{gt.gt_box} kg={gt.gt_weight_kg:.0f} "
+            f"occ={gt.gt_occupancy_ratio:.2f} "
+            f"BP={'Y' if gt.gt_should_bypass else 'n'}  "
             f"PRED(p/s/l/b)={pred_counts['person']}/{pred_counts['stroller']}/"
             f"{pred_counts['luggage']}/{pred_counts['box']} occ={pred_occ:.2f} "
-            f"{'F' if pred_full else 'N'}  → {outcome}"
+            f"smart_BP={'Y' if smart_bypass else 'n'}  → {outcome}"
         )
 
     if not decisions:
@@ -807,7 +1272,7 @@ def main() -> int:
     stats = simulate_calls(
         decisions,
         num_calls=args.num_calls,
-        avg_floors_per_trip=args.avg_floors,
+        floors_count=args.floors_count,
         energy_params=energy_params,
         seed=args.seed,
     )
@@ -816,12 +1281,14 @@ def main() -> int:
     csv_per_img = args.output / "per_image_decisions.csv"
     csv_per_cls = args.output / "per_class_detection.csv"
     csv_energy = args.output / "energy_savings.csv"
+    csv_calls = args.output / "call_log.csv"
     md_report = args.output / "report.md"
 
     render_confusion_matrix_png(decisions, cm_path)
     write_per_image_csv(decisions, csv_per_img)
     write_per_class_csv(class_metrics, csv_per_cls)
     write_energy_csv(stats, csv_energy)
+    write_call_log_csv(stats, csv_calls)
     write_markdown_report(decisions, stats, metrics, class_metrics, args, md_report)
 
     print()
@@ -851,16 +1318,48 @@ def main() -> int:
             f"  {cls:<9} GT={m['gt_total']:>3}  Pred={m['pred_total']:>3}  "
             f"MAE={m['mae']:.2f}  bias={m['bias']:+.2f}"
         )
-    saved_kj = (stats.baseline_total_j - stats.smart_total_j) / 1000
-    saved_pct = (
-        100.0 * (stats.baseline_total_j - stats.smart_total_j) / stats.baseline_total_j
-        if stats.baseline_total_j
-        else 0.0
+    aa_kj = stats.always_accept_total_j / 1000
+    wo_kj = stats.weight_only_total_j / 1000
+    sm_kj = stats.smart_total_j / 1000
+    saved_vs_aa = aa_kj - sm_kj
+    saved_vs_wo = wo_kj - sm_kj
+    pct_vs_aa = 100.0 * saved_vs_aa / aa_kj if aa_kj else 0.0
+    pct_vs_wo = 100.0 * saved_vs_wo / wo_kj if wo_kj else 0.0
+    print()
+    print(f"Energy (three policies over {stats.num_calls} calls):")
+    print(f"  always_accept = {aa_kj:7.1f} kJ   (naive — never bypass)")
+    print(
+        f"  weight_only   = {wo_kj:7.1f} kJ   "
+        f"(Stage 1 alone, current industry; bypassed {stats.weight_only_bypassed})"
     )
     print(
-        f"Energy saved:     {saved_kj:.1f} kJ ({saved_kj / 3600:.3f} kWh) "
-        f"= {saved_pct:.1f}% of baseline over {stats.num_calls} calls"
+        f"  smart         = {sm_kj:7.1f} kJ   "
+        f"(Stage 1 + Stage 2; bypassed {stats.smart_bypassed})"
     )
+    print(f"  Δ smart vs always_accept = {saved_vs_aa:7.1f} kJ ({pct_vs_aa:.1f}%)")
+    print(f"  Δ smart vs weight_only   = {saved_vs_wo:7.1f} kJ ({pct_vs_wo:.1f}%)  ← headline")
+    aa_s = stats.always_accept_total_time_s
+    wo_s = stats.weight_only_total_time_s
+    sm_s = stats.smart_total_time_s
+    saved_t_vs_aa = aa_s - sm_s
+    saved_t_vs_wo = wo_s - sm_s
+    pct_t_vs_aa = 100.0 * saved_t_vs_aa / aa_s if aa_s else 0.0
+    pct_t_vs_wo = 100.0 * saved_t_vs_wo / wo_s if wo_s else 0.0
+    print(f"Time (stop-time overhead):")
+    print(f"  always_accept = {aa_s:7.0f} s ({aa_s / 60:.1f} min)")
+    print(f"  weight_only   = {wo_s:7.0f} s ({wo_s / 60:.1f} min)")
+    print(f"  smart         = {sm_s:7.0f} s ({sm_s / 60:.1f} min)")
+    print(f"  Δ smart vs always_accept = {saved_t_vs_aa:7.0f} s ({pct_t_vs_aa:.1f}%)")
+    print(f"  Δ smart vs weight_only   = {saved_t_vs_wo:7.0f} s ({pct_t_vs_wo:.1f}%)")
+    service_rate = (stats.num_calls - stats.smart_wrong_bypass) / max(1, stats.num_calls)
+    print(
+        f"Smart service quality: rate={100 * service_rate:.1f}%  "
+        f"(TP={stats.smart_correct_bypass}  TN={stats.smart_correct_accept}  "
+        f"FP={stats.smart_wrong_bypass}  FN={stats.smart_wrong_accept})"
+    )
+    print(f"  · saved on correct bypass: {stats.smart_saved_correctly_j / 1000:.1f} kJ")
+    print(f"  · wasted on FN stops:      {stats.smart_wasted_j / 1000:.1f} kJ")
+    print(f"  · mean trip distance:      {stats.mean_distance_floors:.1f} floors")
     print(f"Reports written to: {args.output}/")
     return 0
 
