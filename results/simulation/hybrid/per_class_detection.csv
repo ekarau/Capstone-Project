@@ -1,5 +1,0 @@
-class,gt_total,pred_total,mae,rmse,bias
-person,162,195,1.207,1.608,+1.138
-stroller,22,34,0.552,1.017,+0.414
-luggage,43,47,0.414,0.743,+0.138
-box,0,3,0.103,0.415,+0.103
