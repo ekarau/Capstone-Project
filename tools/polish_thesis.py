@@ -58,6 +58,7 @@ DEFAULT_INPUT = (
 #  Low-level helpers (mirror the ones in update_thesis.py)
 # ──────────────────────────────────────────────────────────────────────
 
+
 def _new_para_after(anchor: Paragraph, text: str, style: str | None = None) -> Paragraph:
     new_p_xml = OxmlElement("w:p")
     anchor._p.addnext(new_p_xml)
@@ -263,6 +264,7 @@ def insert_image_placeholders(doc) -> None:
 
 # ── Re-ordering the Leakage-Safe Split section ─────────────────────────
 
+
 def move_leakage_safe_section(doc) -> None:
     """Move the ``Leakage-Safe Dataset Split`` heading and its body
     paragraph so that they appear directly after the ``Dataset Creation
@@ -289,9 +291,7 @@ def move_leakage_safe_section(doc) -> None:
     # Find the destination anchor: the LAST paragraph of the Dataset
     # Creation section, which is the paragraph immediately before the
     # next Heading 2 ("Performance Metrics and Validation").
-    dataset_head = _find_paragraph_equals(
-        doc, "Dataset Creation and Image Augmentation Strategies"
-    )
+    dataset_head = _find_paragraph_equals(doc, "Dataset Creation and Image Augmentation Strategies")
     if dataset_head is None:
         return
     cur = dataset_head._p.getnext()
@@ -319,6 +319,7 @@ def move_leakage_safe_section(doc) -> None:
 
 
 # ── References cleanup ────────────────────────────────────────────────
+
 
 def cleanup_references(doc) -> None:
     """Merge the orphan ``Routledge.`` line into the preceding
@@ -443,35 +444,33 @@ def remove_template_spacers(doc) -> None:
 # without touching genuine em-dash uses (such as the names of European
 # standards in the references).
 EM_DASH_PATCHES: list[tuple[str, str]] = [
-    ("Algorithm 1 — Load- and Area-Based Elevator Control",
-     "Algorithm 1: Load- and Area-Based Elevator Control"),
-    ("# 4-class + (optional) head model",
-     "// 4-class plus optional head model"),
-    ("Hybrid Detection Pipeline (4-class + Head)",
-     "Hybrid Detection Pipeline"),
-    ("Energy and Stop-Time Savings — Three-Policy Comparison",
-     "Energy and Stop-Time Savings"),
-    ("Smart vs Weight-Only — the Real Contribution",
-     "Smart Versus Weight-Only as the Real Contribution"),
-    ("Comparison with Andrei & Ruokokoski's Targets",
-     "Comparison with the Targets of Andrei and Ruokokoski (2022)"),
-    ("Why Hybrid Outperforms Single-Model",
-     "Why the Hybrid Configuration Outperforms the Single Model"),
+    (
+        "Algorithm 1 — Load- and Area-Based Elevator Control",
+        "Algorithm 1: Load- and Area-Based Elevator Control",
+    ),
+    ("# 4-class + (optional) head model", "// 4-class plus optional head model"),
+    ("Hybrid Detection Pipeline (4-class + Head)", "Hybrid Detection Pipeline"),
+    ("Energy and Stop-Time Savings — Three-Policy Comparison", "Energy and Stop-Time Savings"),
+    (
+        "Smart vs Weight-Only — the Real Contribution",
+        "Smart Versus Weight-Only as the Real Contribution",
+    ),
+    (
+        "Comparison with Andrei & Ruokokoski's Targets",
+        "Comparison with the Targets of Andrei and Ruokokoski (2022)",
+    ),
+    (
+        "Why Hybrid Outperforms Single-Model",
+        "Why the Hybrid Configuration Outperforms the Single Model",
+    ),
     # Table-caption dashes.
-    ("Table 3.1 — Per-class average footprint",
-     "Table 3.1. Per-class average footprint"),
-    ("Table 3.2 — Per-class average mass",
-     "Table 3.2. Per-class average mass"),
-    ("Table 4.1 — Validation-split detection",
-     "Table 4.1. Validation-split detection"),
-    ("Table 4.2 — Smart bypass quality",
-     "Table 4.2. Smart bypass quality"),
-    ("Table 4.3 — Per-policy stop-overhead",
-     "Table 4.3. Per-policy stop-overhead"),
-    ("Table 4.4 — Per-policy stop-time",
-     "Table 4.4. Per-policy stop-time"),
-    ("Table 4.5 — Per-class counting",
-     "Table 4.5. Per-class counting"),
+    ("Table 3.1 — Per-class average footprint", "Table 3.1. Per-class average footprint"),
+    ("Table 3.2 — Per-class average mass", "Table 3.2. Per-class average mass"),
+    ("Table 4.1 — Validation-split detection", "Table 4.1. Validation-split detection"),
+    ("Table 4.2 — Smart bypass quality", "Table 4.2. Smart bypass quality"),
+    ("Table 4.3 — Per-policy stop-overhead", "Table 4.3. Per-policy stop-overhead"),
+    ("Table 4.4 — Per-policy stop-time", "Table 4.4. Per-policy stop-time"),
+    ("Table 4.5 — Per-class counting", "Table 4.5. Per-class counting"),
 ]
 
 
@@ -492,11 +491,13 @@ def patch_remaining_em_dashes(doc) -> None:
 #  Driver
 # ──────────────────────────────────────────────────────────────────────
 
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--input", default=DEFAULT_INPUT, type=Path)
-    ap.add_argument("--output", default=None, type=Path,
-                    help="Output path. Defaults to overwriting --input.")
+    ap.add_argument(
+        "--output", default=None, type=Path, help="Output path. Defaults to overwriting --input."
+    )
     args = ap.parse_args()
 
     if not args.input.exists():

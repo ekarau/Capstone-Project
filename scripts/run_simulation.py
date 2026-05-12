@@ -902,12 +902,8 @@ def write_markdown_report(
     )
     lines.append("|  | Smart: accept | Smart: bypass |")
     lines.append("|---|:---:|:---:|")
-    lines.append(
-        f"| **GT: should accept** | {metrics['tn']} (TN) | {metrics['fp']} (FP) |"
-    )
-    lines.append(
-        f"| **GT: should bypass** | {metrics['fn']} (FN) | {metrics['tp']} (TP) |"
-    )
+    lines.append(f"| **GT: should accept** | {metrics['tn']} (TN) | {metrics['fp']} (FP) |")
+    lines.append(f"| **GT: should bypass** | {metrics['fn']} (FN) | {metrics['tp']} (TP) |")
     lines.append("")
     lines.append(f"- **Bypass accuracy**:  {metrics['accuracy']:.3f}")
     lines.append(f"- Bypass precision:    {metrics['precision']:.3f}")
@@ -960,12 +956,11 @@ def write_markdown_report(
         "the call log for the per-call full Tukia (2018) trip energy.\n"
     )
     lines.append("Three policies are compared on the same 1 000-call stream:\n")
-    lines.append("| Policy | Bypassed | Accepted | Total energy | Δ vs always-accept | Δ vs weight-only |")
-    lines.append("|---|:---:|:---:|:---:|:---:|:---:|")
     lines.append(
-        f"| Always-accept (naive) | 0 | {stats.num_calls} | "
-        f"**{aa_kj:.1f} kJ** | — | — |"
+        "| Policy | Bypassed | Accepted | Total energy | Δ vs always-accept | Δ vs weight-only |"
     )
+    lines.append("|---|:---:|:---:|:---:|:---:|:---:|")
+    lines.append(f"| Always-accept (naive) | 0 | {stats.num_calls} | **{aa_kj:.1f} kJ** | — | — |")
     lines.append(
         f"| Weight-only (current industry) | {stats.weight_only_bypassed} | "
         f"{stats.weight_only_accepted} | **{wo_kj:.1f} kJ** | "
@@ -1333,8 +1328,7 @@ def main() -> int:
         f"(Stage 1 alone, current industry; bypassed {stats.weight_only_bypassed})"
     )
     print(
-        f"  smart         = {sm_kj:7.1f} kJ   "
-        f"(Stage 1 + Stage 2; bypassed {stats.smart_bypassed})"
+        f"  smart         = {sm_kj:7.1f} kJ   (Stage 1 + Stage 2; bypassed {stats.smart_bypassed})"
     )
     print(f"  Δ smart vs always_accept = {saved_vs_aa:7.1f} kJ ({pct_vs_aa:.1f}%)")
     print(f"  Δ smart vs weight_only   = {saved_vs_wo:7.1f} kJ ({pct_vs_wo:.1f}%)  ← headline")

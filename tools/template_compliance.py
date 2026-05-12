@@ -57,6 +57,7 @@ DEFAULT_OUTPUT = (
 #  Low-level helpers
 # ──────────────────────────────────────────────────────────────────────
 
+
 def _find_paragraph_equals(doc, exact: str) -> Paragraph | None:
     for p in doc.paragraphs:
         if p.text.strip() == exact:
@@ -98,6 +99,7 @@ def _ensure_style(doc, style_name: str, base_style: str = "Normal"):
 # ──────────────────────────────────────────────────────────────────────
 #  Document defaults: font, line spacing, margins
 # ──────────────────────────────────────────────────────────────────────
+
 
 def set_document_defaults(doc) -> None:
     """Set Times New Roman 12pt with 1.5 line spacing on the Normal
@@ -143,6 +145,7 @@ def set_document_defaults(doc) -> None:
 #  Per-paragraph 11pt overrides for abstract, keywords, captions, refs
 # ──────────────────────────────────────────────────────────────────────
 
+
 def _apply_run_font(p: Paragraph, *, size_pt: int = 11, bold: bool | None = None) -> None:
     """Force every run in ``p`` to Times New Roman, ``size_pt``,
     optionally bold."""
@@ -166,9 +169,7 @@ def _apply_run_font(p: Paragraph, *, size_pt: int = 11, bold: bool | None = None
 def apply_typography_overrides(doc) -> None:
     """Apply the 11pt overrides specified by the guideline."""
     # Abstract paragraph (the long single paragraph filled by polish_thesis.py).
-    abstract = _find_paragraph_starting_with(
-        doc, "This thesis addresses the operational"
-    )
+    abstract = _find_paragraph_starting_with(doc, "This thesis addresses the operational")
     if abstract is not None:
         _apply_run_font(abstract, size_pt=11)
 
@@ -180,9 +181,11 @@ def apply_typography_overrides(doc) -> None:
     # Table and figure captions: bold, 11pt.
     for p in doc.paragraphs:
         text = p.text.strip()
-        if (text.startswith("Table ") and (
-            text[len("Table "): len("Table ") + 1].isdigit()
-        )) or text.startswith("Fig. ") or text.startswith("Figure "):
+        if (
+            (text.startswith("Table ") and (text[len("Table ") : len("Table ") + 1].isdigit()))
+            or text.startswith("Fig. ")
+            or text.startswith("Figure ")
+        ):
             _apply_run_font(p, size_pt=11, bold=True)
 
     # References list: 11pt (not bold). Find REFERENCES heading and walk
@@ -206,8 +209,7 @@ def apply_typography_overrides(doc) -> None:
 # ──────────────────────────────────────────────────────────────────────
 
 KEYWORDS_FIVE = (
-    "Keywords: smart elevator control; computer vision; YOLOv8; "
-    "load-area bypass; energy efficiency"
+    "Keywords: smart elevator control; computer vision; YOLOv8; load-area bypass; energy efficiency"
 )
 
 
@@ -251,6 +253,7 @@ def fix_hyphenation_artefacts(doc) -> None:
 # ──────────────────────────────────────────────────────────────────────
 #  Sort the References section alphabetically
 # ──────────────────────────────────────────────────────────────────────
+
 
 def _ref_sort_key(text: str) -> tuple[str, str]:
     """Return a case-insensitive sort key for a reference entry.
@@ -328,10 +331,7 @@ def sort_references_alphabetically(doc) -> None:
     sorted_xmls = sorted(
         ref_xmls,
         key=lambda elem: _ref_sort_key(
-            "".join(
-                t.text or ""
-                for t in elem.findall(qn("w:r") + "/" + qn("w:t"))
-            )
+            "".join(t.text or "" for t in elem.findall(qn("w:r") + "/" + qn("w:t")))
         ),
     )
 
@@ -348,6 +348,7 @@ def sort_references_alphabetically(doc) -> None:
 # ──────────────────────────────────────────────────────────────────────
 #  Word TOC field insertion
 # ──────────────────────────────────────────────────────────────────────
+
 
 def _add_field(paragraph: Paragraph, instr_text: str, placeholder_text: str) -> None:
     """Append a Word field (begin/instruction/separate/placeholder/end)
@@ -462,6 +463,7 @@ def insert_toc_fields(doc) -> None:
 #  Apply Caption style to existing static table/figure captions
 # ──────────────────────────────────────────────────────────────────────
 
+
 def apply_caption_style(doc) -> None:
     """Apply the ``Caption`` style to every paragraph that begins with
     ``Table N`` or ``Fig. N`` / ``Figure N``."""
@@ -474,9 +476,7 @@ def apply_caption_style(doc) -> None:
             and text[len("Table ")].isdigit()
         )
         is_figure = (
-            text.startswith("Fig. ")
-            or text.startswith("Figure ")
-            or text.startswith("[Figure ")
+            text.startswith("Fig. ") or text.startswith("Figure ") or text.startswith("[Figure ")
         )
         if is_table or is_figure:
             with contextlib.suppress(Exception):
@@ -633,6 +633,7 @@ def add_chapter_page_breaks(doc) -> None:
 # ──────────────────────────────────────────────────────────────────────
 #  Driver
 # ──────────────────────────────────────────────────────────────────────
+
 
 def main() -> int:
     ap = argparse.ArgumentParser()

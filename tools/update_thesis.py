@@ -78,6 +78,7 @@ DEFAULT_OUTPUT = (
 #  Low-level XML helpers
 # ──────────────────────────────────────────────────────────────────────
 
+
 def _new_para_after(anchor: Paragraph, text: str, style: str | None = None) -> Paragraph:
     """Insert a new paragraph immediately after ``anchor`` and return it."""
     new_p_xml = OxmlElement("w:p")
@@ -166,6 +167,7 @@ def _insert_table_after(
 # ──────────────────────────────────────────────────────────────────────
 #  Helpers for inserting whole sections
 # ──────────────────────────────────────────────────────────────────────
+
 
 def insert_block(anchor: Paragraph, blocks: list[tuple[str, str]]) -> Paragraph:
     """Insert a sequence of (style, text) paragraphs after ``anchor``.
@@ -578,7 +580,10 @@ RESULTS_BLOCK: list[tuple[str, str]] = [
         "same confidence threshold of 0.40 and the same area threshold "
         "τ_A = 0.90. The results are summarised in Table 4.2.",
     ),
-    ("Normal", "Table 4.2. Bypass-decision quality on the 67-image cabin set, single-model versus hybrid."),
+    (
+        "Normal",
+        "Table 4.2. Bypass-decision quality on the 67-image cabin set, single-model versus hybrid.",
+    ),
     # Table inserted programmatically here.
     (
         "Body Text",
@@ -608,9 +613,15 @@ RESULTS_BLOCK: list[tuple[str, str]] = [
         "the corresponding stop-time aggregates are reported in "
         "Table 4.4.",
     ),
-    ("Normal", "Table 4.3. Per-policy stop-overhead energy over 1,000 hall calls (hybrid configuration)."),
+    (
+        "Normal",
+        "Table 4.3. Per-policy stop-overhead energy over 1,000 hall calls (hybrid configuration).",
+    ),
     # Table inserted programmatically here.
-    ("Normal", "Table 4.4. Per-policy stop-time over 1,000 hall calls (hybrid configuration; 10 s per stop)."),
+    (
+        "Normal",
+        "Table 4.4. Per-policy stop-time over 1,000 hall calls (hybrid configuration; 10 s per stop).",
+    ),
     # Table inserted programmatically here.
     (
         "Body Text",
@@ -640,7 +651,10 @@ RESULTS_BLOCK: list[tuple[str, str]] = [
         "objects across the four classes. The per-class counting "
         "metrics are reported in Table 4.5.",
     ),
-    ("Normal", "Table 4.5. Per-class counting metrics on the 67-image cabin set (hybrid configuration)."),
+    (
+        "Normal",
+        "Table 4.5. Per-class counting metrics on the 67-image cabin set (hybrid configuration).",
+    ),
     # Table inserted programmatically here.
     (
         "Body Text",
@@ -939,6 +953,7 @@ REFERENCE_ADDITIONS: list[str] = [
 #  Pipeline
 # ──────────────────────────────────────────────────────────────────────
 
+
 def apply_text_replacements(doc) -> None:
     """Apply all in-place text replacements in the body."""
     paragraphs = doc.paragraphs
@@ -1173,9 +1188,7 @@ def delete_legacy_area_occupancy_section(doc) -> None:
         text = "".join(t.text or "" for t in text_nodes).strip()
         # Stop at the next Heading 2 boundary (text-based heuristic for the
         # known following heading).
-        if text.startswith("Performance Metrics") or text.startswith(
-            "Data Availability"
-        ):
+        if text.startswith("Performance Metrics") or text.startswith("Data Availability"):
             break
         to_delete.append(next_xml)
         next_xml = next_xml.getnext()
@@ -1206,8 +1219,7 @@ def replace_results_placeholders(doc) -> None:
             next_xml = next_xml.getnext()
             # Stop deleting once we hit "Discussion and Conclusion".
             t2 = "".join(
-                t.text or ""
-                for t in to_remove.findall(qn("w:r") + "/" + qn("w:t"))
+                t.text or "" for t in to_remove.findall(qn("w:r") + "/" + qn("w:t"))
             ).strip()
             if t2 == "Discussion and Conclusion":
                 # Don't delete the next-section header.
@@ -1232,8 +1244,7 @@ def replace_discussion_placeholders(doc) -> None:
             to_remove = next_xml
             next_xml = next_xml.getnext()
             t2 = "".join(
-                t.text or ""
-                for t in to_remove.findall(qn("w:r") + "/" + qn("w:t"))
+                t.text or "" for t in to_remove.findall(qn("w:r") + "/" + qn("w:t"))
             ).strip()
             if t2 == "ACKNOWLEDGEMENT":
                 break
@@ -1306,6 +1317,7 @@ def append_references(doc) -> None:
 # ──────────────────────────────────────────────────────────────────────
 #  Driver
 # ──────────────────────────────────────────────────────────────────────
+
 
 def main() -> int:
     ap = argparse.ArgumentParser()
