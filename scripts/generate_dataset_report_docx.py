@@ -5,20 +5,18 @@ Output: results/dataset_class_distribution.docx
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 from docx import Document
-from docx.enum.table import WD_ALIGN_VERTICAL, WD_ROW_HEIGHT_RULE
+from docx.enum.table import WD_ALIGN_VERTICAL
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
 
-
-HEADER_FILL = "1F4E78"   # dark blue
-ZEBRA_FILL = "F2F2F2"    # light grey for alternating rows
-TOTAL_FILL = "DCE6F1"    # light blue for total rows
+HEADER_FILL = "1F4E78"  # dark blue
+ZEBRA_FILL = "F2F2F2"  # light grey for alternating rows
+TOTAL_FILL = "DCE6F1"  # light blue for total rows
 
 
 def set_cell_fill(cell, hex_color: str) -> None:
@@ -114,9 +112,7 @@ def make_table(
         fill = TOTAL_FILL if is_total else (ZEBRA_FILL if row_idx % 2 == 1 else None)
         for col_idx, value in enumerate(row):
             align = (
-                WD_ALIGN_PARAGRAPH.RIGHT
-                if col_idx in align_right_cols
-                else WD_ALIGN_PARAGRAPH.LEFT
+                WD_ALIGN_PARAGRAPH.RIGHT if col_idx in align_right_cols else WD_ALIGN_PARAGRAPH.LEFT
             )
             write_cell(
                 table.cell(row_idx + 1, col_idx),
@@ -169,12 +165,12 @@ def main() -> None:
 
     headers_1 = ["Class", "Train", "Val", "Test", "TOTAL Instances"]
     rows_1 = [
-        ["person",   "20,591", "1,215", "844", "22,650"],
-        ["stroller",  "8,073",   "587", "178",  "8,838"],
-        ["luggage",   "1,757",   "204",  "62",  "2,023"],
-        ["box",       "1,432",   "121",  "40",  "1,593"],
+        ["person", "20,591", "1,215", "844", "22,650"],
+        ["stroller", "8,073", "587", "178", "8,838"],
+        ["luggage", "1,757", "204", "62", "2,023"],
+        ["box", "1,432", "121", "40", "1,593"],
         ["TOTAL Instances", "31,853", "2,127", "1,124", "35,104"],
-        ["Image count",     "13,386",   "857",   "367", "14,610"],
+        ["Image count", "13,386", "857", "367", "14,610"],
     ]
     make_table(
         doc,
@@ -198,10 +194,10 @@ def main() -> None:
         "Increase",
     ]
     rows_2 = [
-        ["person",   "6,931",  "3x",  "20,591", "+197%"],
-        ["stroller", "2,989",  "2x",   "8,073", "+170%"],
-        ["luggage",    "829",  "2x",   "1,757", "+112%"],
-        ["box",        "287",  "5x",   "1,432", "+399%"],
+        ["person", "6,931", "3x", "20,591", "+197%"],
+        ["stroller", "2,989", "2x", "8,073", "+170%"],
+        ["luggage", "829", "2x", "1,757", "+112%"],
+        ["box", "287", "5x", "1,432", "+399%"],
     ]
     make_table(
         doc,
@@ -218,10 +214,10 @@ def main() -> None:
 
     headers_3 = ["Class", "Val", "Test"]
     rows_3 = [
-        ["person",   "1,215", "844"],
-        ["stroller",   "587", "178"],
-        ["luggage",    "204",  "62"],
-        ["box",        "121",  "40"],
+        ["person", "1,215", "844"],
+        ["stroller", "587", "178"],
+        ["luggage", "204", "62"],
+        ["box", "121", "40"],
     ]
     make_table(
         doc,
@@ -238,18 +234,18 @@ def main() -> None:
 
     headers_4 = ["Source", "Train", "Val", "Test", "Notes"]
     rows_4 = [
-        ["Elevator.yolov8",                "0",     "0",   "80",  "Custom elevator data (test-only)"],
-        ["-People Counting.yolov8",        "514",  "96",   "32",  "Person video frames"],
-        ["people ditection in elevator",   "197",   "0",    "0",  "Small set, all to train"],
-        ["top down view.yolov8",            "39",   "0",    "0",  "Very small, all to train"],
-        ["normal3.yolov8",                  "85",  "16",    "5",  "908 empty labels dropped"],
-        ["Stroller.yolov8",              "2,676", "501",  "168",  "Multi-class source"],
-        ["My Luggage.yolov8",               "66",  "13",    "1",  "—"],
-        ["luggage.yolov8",                  "80",  "15",    "5",  "Polygon→bbox converted"],
-        ["suitcase.yolov8",                "446",  "83",   "28",  "—"],
-        ["box.yolov8",                     "121",  "23",   "11",  "Augmentation 5x applied"],
-        ["lastdataset_extra.yolov8",       "590", "110",   "37",  "★ Newly added (deduplicated)"],
-        ["TOTAL (pre-aug)",              "4,814", "857",  "367",  "—"],
+        ["Elevator.yolov8", "0", "0", "80", "Custom elevator data (test-only)"],
+        ["-People Counting.yolov8", "514", "96", "32", "Person video frames"],
+        ["people ditection in elevator", "197", "0", "0", "Small set, all to train"],
+        ["top down view.yolov8", "39", "0", "0", "Very small, all to train"],
+        ["normal3.yolov8", "85", "16", "5", "908 empty labels dropped"],
+        ["Stroller.yolov8", "2,676", "501", "168", "Multi-class source"],
+        ["My Luggage.yolov8", "66", "13", "1", "—"],
+        ["luggage.yolov8", "80", "15", "5", "Polygon→bbox converted"],
+        ["suitcase.yolov8", "446", "83", "28", "—"],
+        ["box.yolov8", "121", "23", "11", "Augmentation 5x applied"],
+        ["lastdataset_extra.yolov8", "590", "110", "37", "★ Newly added (deduplicated)"],
+        ["TOTAL (pre-aug)", "4,814", "857", "367", "—"],
     ]
     make_table(
         doc,
@@ -267,12 +263,12 @@ def main() -> None:
 
     headers_5 = ["Check", "Result"]
     rows_5 = [
-        ["Empty labels (dropped)",                      "957"],
-        ["Class-map drops (dropped)",                   "2"],
-        ["Group-prefix leakage (between splits)",       "0   ✅ none"],
-        ["Augmented files in Val",                      "0   ✅ clean"],
-        ["Augmented files in Test",                     "0   ✅ clean"],
-        ["Augmented files in Train",                    "8,572"],
+        ["Empty labels (dropped)", "957"],
+        ["Class-map drops (dropped)", "2"],
+        ["Group-prefix leakage (between splits)", "0   ✅ none"],
+        ["Augmented files in Val", "0   ✅ clean"],
+        ["Augmented files in Test", "0   ✅ clean"],
+        ["Augmented files in Train", "8,572"],
     ]
     make_table(
         doc,
@@ -288,10 +284,10 @@ def main() -> None:
 
     headers_6 = ["Class", "Spatial Unit (Thesis)", "Aug Multiplier", "Test Instances"]
     rows_6 = [
-        ["person",   "20,000", "3x",  "844"],
-        ["stroller", "45,000", "2x",  "178"],
-        ["luggage",  "30,000", "2x",   "62"],
-        ["box",      "25,000", "5x",   "40"],
+        ["person", "20,000", "3x", "844"],
+        ["stroller", "45,000", "2x", "178"],
+        ["luggage", "30,000", "2x", "62"],
+        ["box", "25,000", "5x", "40"],
     ]
     make_table(
         doc,

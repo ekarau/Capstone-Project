@@ -1,4 +1,4 @@
-"""Two-stage load-and-area elevator control (Andrei & Ruokokoski, 2022).
+"""Two-stage load-and-area elevator control.
 
 For each incoming hall call the controller emits one of three decisions
 :math:`\\delta \\in \\{\\text{accept},\\text{bypass}_W,\\text{bypass}_A\\}`
@@ -67,9 +67,7 @@ class ElevatorController:
 
         # Stage 1: weight check
         if weight_ratio >= self.weight_bypass_ratio:
-            self._logger.debug(
-                f"Bypass (weight): {weight_kg:.1f} kg / {self.max_weight_kg} kg"
-            )
+            self._logger.debug(f"Bypass (weight): {weight_kg:.1f} kg / {self.max_weight_kg} kg")
             return ControlResult(
                 decision=ControlDecision.BYPASS_BY_WEIGHT,
                 weight_kg=weight_kg,

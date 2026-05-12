@@ -14,8 +14,8 @@ occupancy mask, ensuring perfect alignment between the two views.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 import numpy as np
 
@@ -47,8 +47,8 @@ class BirdsEyeView:
 
     def world_to_bev(self, x_m: float, y_m: float) -> tuple[int, int]:
         """Convert world (m) -> BEV pixel coords."""
-        u = int(round(x_m * self.bev_size_px / self.cabin_width_m))
-        v = int(round(y_m * self.bev_size_px / self.cabin_depth_m))
+        u = round(x_m * self.bev_size_px / self.cabin_width_m)
+        v = round(y_m * self.bev_size_px / self.cabin_depth_m)
         return u, v
 
     def warp_image(self, image: np.ndarray) -> np.ndarray:
@@ -62,9 +62,7 @@ class BirdsEyeView:
         sy = self.bev_size_px / self.cabin_depth_m
         S = np.array([[sx, 0, 0], [0, sy, 0], [0, 0, 1]], dtype=np.float64)
         H_img_to_bev = S @ self.homography
-        return cv2.warpPerspective(
-            image, H_img_to_bev, (self.bev_size_px, self.bev_size_px)
-        )
+        return cv2.warpPerspective(image, H_img_to_bev, (self.bev_size_px, self.bev_size_px))
 
     def project_detection_world(self, det: Detection) -> tuple[float, float]:
         """Bottom-mid of bbox -> floor-plane meters."""
@@ -92,8 +90,10 @@ class BirdsEyeView:
             cx, cy = self.world_to_bev(world_x, world_y)
             # Use the smaller of the two scales so the circle stays a circle
             # in BEV pixel space *and* under-approximates rather than over-.
-            scale = min(self.bev_size_px / self.cabin_width_m, self.bev_size_px / self.cabin_depth_m)
-            r_px = max(1, int(round(radius_m * scale)))
+            scale = min(
+                self.bev_size_px / self.cabin_width_m, self.bev_size_px / self.cabin_depth_m
+            )
+            r_px = max(1, round(radius_m * scale))
             cv2.circle(mask, (cx, cy), r_px, 255, thickness=-1)
         return mask
 
@@ -126,8 +126,16 @@ class BirdsEyeView:
             x1, y1, x2, y2 = det.bbox
             cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
             label = f"{det.class_name} {det.confidence:.2f}"
-            cv2.putText(annotated, label, (x1, max(15, y1 - 5)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+            cv2.putText(
+                annotated,
+                label,
+                (x1, max(15, y1 - 5)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                color,
+                1,
+                cv2.LINE_AA,
+            )
 
         bev = self.warp_image(image)
         mask = self.render_occupancy_mask(detections, footprint_radius_m)
@@ -135,13 +143,11 @@ class BirdsEyeView:
         overlay = bev.copy()
         red_layer = np.zeros_like(bev)
         red_layer[..., 2] = 255  # red in BGR
-        overlay = np.where(mask[..., None] > 0,
-                           cv2.addWeighted(bev, 0.4, red_layer, 0.6, 0),
-                           bev)
+        overlay = np.where(mask[..., None] > 0, cv2.addWeighted(bev, 0.4, red_layer, 0.6, 0), bev)
         # Draw cabin border + grid on BEV
-        cv2.rectangle(overlay, (0, 0),
-                      (self.bev_size_px - 1, self.bev_size_px - 1),
-                      (255, 255, 255), 2)
+        cv2.rectangle(
+            overlay, (0, 0), (self.bev_size_px - 1, self.bev_size_px - 1), (255, 255, 255), 2
+        )
         # Show occupancy text
         if occupancy_ratio is None:
             occupancy_ratio = self.occupancy_ratio_from_mask(mask)

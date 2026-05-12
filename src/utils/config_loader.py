@@ -34,7 +34,7 @@ def load_config(*paths: str | Path) -> dict:
         p = Path(p)
         if not p.exists():
             raise FileNotFoundError(f"Config not found: {p}")
-        with open(p, "r", encoding="utf-8") as f:
+        with open(p, encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         merged = _deep_merge(merged, data)
     return merged
@@ -57,11 +57,11 @@ class ElevatorConfig:
             elev["total_floor_area_m2"] = float(elev["width_m"]) * float(elev["depth_m"])
 
     @classmethod
-    def from_yaml(cls, *paths: str | Path) -> "ElevatorConfig":
+    def from_yaml(cls, *paths: str | Path) -> ElevatorConfig:
         return cls(load_config(*paths))
 
     @classmethod
-    def from_dict(cls, data: dict) -> "ElevatorConfig":
+    def from_dict(cls, data: dict) -> ElevatorConfig:
         return cls(deepcopy(data))
 
     def to_dict(self) -> dict:
@@ -83,7 +83,7 @@ class ElevatorConfig:
         return self._data.get(key, default)
 
     # Overrides ----------------------------------------------------------------
-    def with_overrides(self, **section_overrides: dict) -> "ElevatorConfig":
+    def with_overrides(self, **section_overrides: dict) -> ElevatorConfig:
         """Return a NEW config with given section overrides merged in.
 
         Example:
@@ -98,7 +98,7 @@ class ElevatorConfig:
         depth_m: float | None = None,
         height_m: float | None = None,
         max_weight_kg: float | None = None,
-    ) -> "ElevatorConfig":
+    ) -> ElevatorConfig:
         """Convenience override for cabin geometry."""
         update: dict = {}
         if width_m is not None:

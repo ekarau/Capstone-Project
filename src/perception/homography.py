@@ -45,7 +45,7 @@ def save_homography(H: np.ndarray, path: str | Path) -> None:
 
 
 def load_homography(path: str | Path) -> np.ndarray:
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         data = yaml.safe_load(f)
     return np.array(data["homography"], dtype=np.float64)
 
@@ -79,12 +79,15 @@ def synthetic_homography(
     margin_x = w * margin_ratio
     margin_y = h * margin_ratio
 
-    image_pts = np.array([
-        [margin_x, margin_y],                    # far-left (back-left corner)
-        [w - margin_x, margin_y],                # far-right
-        [w - margin_x * 0.3, h - margin_y],      # near-right (perspective)
-        [margin_x * 0.3, h - margin_y],          # near-left
-    ], dtype=np.float64)
+    image_pts = np.array(
+        [
+            [margin_x, margin_y],  # far-left (back-left corner)
+            [w - margin_x, margin_y],  # far-right
+            [w - margin_x * 0.3, h - margin_y],  # near-right (perspective)
+            [margin_x * 0.3, h - margin_y],  # near-left
+        ],
+        dtype=np.float64,
+    )
 
     world_pts = cabin_corner_world_points(cabin_width_m, cabin_depth_m)
     return compute_homography(image_pts, world_pts)

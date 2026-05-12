@@ -17,7 +17,7 @@ elevator:
   total_floor_area_m2: 2.24     # = width × depth (auto-derived if omitted)
   max_weight_kg: 630            # Rated load (kg)
   rated_capacity_persons: 8     # Rated capacity = max_weight / 75 kg
-  empty_car_mass_kg: 800        # Empty cabin mass (m_car) — Tukia 2018
+  empty_car_mass_kg: 800        # Empty cabin mass (m_car)
   counterweight_K: 0.45         # Counterweight ratio (40–50%) — Eq. (2)
   motor_efficiency: 0.85        # Hoisting efficiency (~0.85 for regen)
   rated_speed_mps: 1.0          # Rated speed (m/s)
@@ -132,13 +132,12 @@ augmentation:
     hsv_v: 0.4
     gaussian_noise_p: 0.25
   occlusion:
-    # Random erasing helps person detection — synthetic occlusion,
-    # following Wu et al. (2024).
+    # Random erasing helps person detection — synthetic occlusion.
     random_erasing_p: 0.45     # 0.30 → 0.45 (more occlusion simulation)
     cutout_max_h_w: 0.20       # 0.15 → 0.20 (larger erased patches)
 
 # ──────────────────────────────────────────────────────────────
-#  Energy model (Tukia et al. 2018)
+#  Energy model
 # ──────────────────────────────────────────────────────────────
 energy:
   power_idle_w: 50              # P_idle (idle draw)

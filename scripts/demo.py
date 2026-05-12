@@ -91,9 +91,9 @@ def main() -> None:
     result = controller.decide(args.weight, img)
 
     print(f"\n=== DECISION: {result.decision.value.upper()} ===")
-    print(f"  weight       : {result.weight_kg:.1f} kg ({result.weight_ratio*100:.1f}%)")
+    print(f"  weight       : {result.weight_kg:.1f} kg ({result.weight_ratio * 100:.1f}%)")
     if result.occupancy_ratio is not None:
-        print(f"  occupancy    : {result.occupancy_ratio*100:.1f}%")
+        print(f"  occupancy    : {result.occupancy_ratio * 100:.1f}%")
     print(f"  detections   : {result.num_detections}")
 
     # Visualization (only meaningful if BEV occupancy was used)

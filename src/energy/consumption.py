@@ -1,7 +1,7 @@
-"""Elevator power and energy estimator after Tukia et al. (2018).
+"""Elevator power and energy estimator.
 
-This module implements the simplified energy model from Section 2 of the
-reference paper. Total session energy decomposes as
+This module implements a simplified physical energy model. Total session
+energy decomposes as
 
 .. math::
 
@@ -11,17 +11,15 @@ For each *start* (a floor-to-floor traversal of distance :math:`h`):
 
 .. math::
 
-    E_\\text{potential} &= \\big(m_\\text{load} - K \\cdot m_\\text{nominal}\\big)\\,g\\,h
-        \\hfill\\text{(Eq. 3)} \\\\
+    E_\\text{potential} &= \\big(m_\\text{load} - K \\cdot m_\\text{nominal}\\big)\\,g\\,h \\\\
     E_\\text{running}   &= \\begin{cases}
         E_\\text{potential} / \\eta & \\text{if } E_\\text{potential} \\ge 0\\\\
         E_\\text{potential} \\cdot \\eta & \\text{otherwise (regenerative)}
-    \\end{cases} \\hfill\\text{(Eq. 4)} \\\\
+    \\end{cases} \\\\
     E_\\text{start} &= E_\\text{running}
         + (P_\\text{idle} + P_\\text{control})\\,t_\\text{start}
-        \\hfill\\text{(Eq. 11)}
 
-Stationary stretches follow the three-tier ISO 25745-2 schedule (Eq. 14):
+Stationary stretches follow a three-tier idle / standby schedule:
 
 * :math:`t \\le 5\\,\\text{min}`  : :math:`P_\\text{idle}`
 * :math:`5\\text{–}30\\,\\text{min}`: :math:`P_\\text{standby,5}`
@@ -42,7 +40,7 @@ GRAVITY_MPS2 = 9.81
 
 @dataclass
 class EnergyParams:
-    """All physical & power params required by the Tukia 2018 model."""
+    """All physical and power parameters required by the energy model."""
 
     # Cabin / load
     empty_car_mass_kg: float = 800.0
@@ -68,7 +66,7 @@ class EnergyParams:
     stop_time_s: float = 4.0
 
     @classmethod
-    def from_config(cls, cfg: dict) -> "EnergyParams":
+    def from_config(cls, cfg: dict) -> EnergyParams:
         elev = cfg["elevator"]
         en = cfg["energy"]
         return cls(
@@ -117,8 +115,11 @@ def _start_time_s(distance_m: float, p: EnergyParams) -> float:
     return 2 * math.sqrt(distance_m / a)
 
 
-def estimate_running_energy(load_kg: float, distance_m: float, direction_up: bool, p: EnergyParams) -> float:
-    """Erunning_i in joules per Tukia Eq. (3)–(4)."""
+def estimate_running_energy(
+    load_kg: float, distance_m: float, direction_up: bool, p: EnergyParams
+) -> float:
+    """Running energy of one start in joules (E_potential / eta or, when
+    regenerative, E_potential * eta)."""
     sign = 1.0 if direction_up else -1.0
     net_mass = (p.empty_car_mass_kg + load_kg) - (
         p.empty_car_mass_kg + p.counterweight_K * p.rated_load_kg
@@ -157,14 +158,10 @@ def estimate_stationary_energy(idle_seconds: float, p: EnergyParams) -> float:
     """ISO 25745-2 three-tier stationary energy in Joules."""
     if idle_seconds <= 0:
         return 0.0
-    t1 = min(idle_seconds, 300.0)               # 0–5 min
-    t2 = max(0.0, min(idle_seconds, 1800.0) - 300.0)   # 5–30 min
-    t3 = max(0.0, idle_seconds - 1800.0)        # >30 min
-    return (
-        p.power_idle_w * t1
-        + p.power_standby_5min_w * t2
-        + p.power_standby_30min_w * t3
-    )
+    t1 = min(idle_seconds, 300.0)  # 0–5 min
+    t2 = max(0.0, min(idle_seconds, 1800.0) - 300.0)  # 5–30 min
+    t3 = max(0.0, idle_seconds - 1800.0)  # >30 min
+    return p.power_idle_w * t1 + p.power_standby_5min_w * t2 + p.power_standby_30min_w * t3
 
 
 @dataclass
