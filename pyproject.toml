@@ -45,7 +45,6 @@ dependencies = [
     "pillow>=10.0.0",
     "pyyaml>=6.0",
     "albumentations>=1.4.0",
-    "shapely>=2.0.0",
     "matplotlib>=3.7.0",
     "tqdm>=4.65.0",
     "pandas>=2.0.0",
@@ -82,7 +81,7 @@ exclude = ["tests*", "data*", "models*", "results*"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
-src = ["src", "scripts", "tools", "tests"]
+src = ["src", "scripts", "tests"]
 extend-exclude = ["notebooks", "data", "models"]
 
 [tool.ruff.lint]
@@ -101,10 +100,10 @@ select = [
 ignore = [
     "E501",    # line too long — handled by formatter
     "B008",    # default function args — common in dataclasses
-    # Math notation tolerated repo-wide (uppercase H for homography,
-    # K for counterweight ratio, etc.) — these are domain conventions.
-    "N803",    # invalid argument name (e.g. `H`)
-    "N806",    # non-lowercase variable in function (e.g. `H`)
+    # Math notation tolerated repo-wide (e.g. uppercase K for the
+    # counterweight ratio) — these are domain conventions.
+    "N803",    # invalid argument name
+    "N806",    # non-lowercase variable in function
     "N812",    # lowercase imported as non-lowercase
     "N815",    # mixed-case in class scope
     # Unicode characters are intentional in docstrings / comments / strings.
@@ -122,7 +121,6 @@ ignore = [
 # be invoked both as `python <script>.py` and as `python -m <module>`.
 # That intentionally places imports below module-level code.
 "scripts/*" = ["E402"]
-"tools/*" = ["E402"]
 "src/detection/train.py" = ["E402"]
 # pytest naming conventions
 "tests/*" = ["N802"]

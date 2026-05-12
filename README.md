@@ -157,14 +157,12 @@ notebooks/    Colab-ready notebooks: dataset audit, training, head training, dem
 src/
   dataset/    audit, unification, augmentation
   detection/  YOLOv8 wrappers (training + inference)
-  perception/ homography, BEV, three occupancy estimators
+  perception/ occupancy estimator interface
   energy/     elevator power model
   control/    two-stage hall-call decision
-  simulation/ baseline-vs-smart synthetic comparison
-  utils/      logging, config loader, calibration helpers
-scripts/      command-line entry points (dataset prep, packaging, demo, sim)
+  utils/      logging, config loader
+scripts/      command-line entry points (dataset prep, packaging, simulation)
 tests/        smoke tests for each module
-tools/        manual calibration helpers
 models/weights/  trained checkpoints (gitignored — distributed separately)
 results/      generated figures, CSVs, simulation reports
 ```
@@ -185,9 +183,6 @@ python -m scripts.prepare_dataset --raw data/raw --out data/unified
 
 # Train (Colab notebooks/02_train.ipynb is much faster than CPU)
 python -m src.detection.train --data data/unified/data.yaml --preset balanced
-
-# Single-image demo
-python -m scripts.demo --image path/to/cabin.jpg --weights models/weights/best.pt
 ```
 
 Pretrained `best.pt` and `best_head.pt` (~22 MB each) are distributed
@@ -237,7 +232,7 @@ read off the decision) and *Batch Simulation* (auto-loads whatever
 ## Limitations
 
 * **Synthetic test set.** The 67 cabin images used in the simulation are publicly-available frames augmented with AI-generated cabin photos (ChatGPT, Gemini text-to-image). They cover the full occupancy spectrum, but they are not real CCTV footage — a domain gap to a deployed camera should be expected. Real CCTV footage was not collected because no IRB / ethics-committee approval was obtained within the project scope. Re-running the same protocol on real footage from a target building is the natural next step.
-* **No homography.** The class-footprint occupancy model ignores where each object sits on the floor. When two passengers stand shoulder-to-shoulder, the model still adds the full 0.20 m² twice. The repository ships `FootprintOccupancy` and `BEVMaskOccupancy` (`src/perception/occupancy.py`) for the homography-based alternative — both only need four manually clicked floor corners per cabin and are listed as future work.
+* **No homography.** The class-footprint occupancy model ignores where each object sits on the floor. When two passengers stand shoulder-to-shoulder, the model still adds the full 0.20 m² twice. A position-aware alternative — for example a homography-based union of per-class disks or a birds-eye-view occupancy mask — would only require four manually clicked floor corners per cabin and is listed as future work.
 * **Single-frame inference.** Multi-frame tracking (BoT-SORT, ByteTrack) would prevent the same passenger from being counted on consecutive frames if the system is later wired to a video stream. The current pipeline reads a single CCTV frame, matching the project's intended deployment.
 * **No real-time benchmark.** Inference latency / FPS has not been profiled on a target edge device; "real-time" claims in the literature review are inherited from the YOLOv8 architecture and not measured for this prototype.
 * **No traffic simulator.** Average Waiting Time (AWT) is not directly measured. The reported "stop-time saved" metric is the total per-stop overhead avoided across all bypassed calls, not the wait-time of an individual passenger queue. A full traffic-simulator integration (Elevate®-style, Barney 2003) is left as future work.

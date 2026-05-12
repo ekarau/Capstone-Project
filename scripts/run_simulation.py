@@ -619,7 +619,22 @@ def per_image_csv_columns() -> list[str]:
 
 
 def per_class_count_metrics(decisions: list[ImageDecision]) -> dict[str, dict[str, float]]:
-    """Mean absolute error and total counts per class."""
+    """Per-class counting statistics.
+
+    Reports two complementary views of counting quality:
+
+    * Image-level error (MAE / RMSE / bias) — how far per-image predicted
+      counts are from ground truth, on average. Sensitive to direction
+      (over- vs under-detection) via ``bias``.
+    * Object-level retrieval (TP / FN / FP, recall, precision, F1) —
+      treats each detected instance as a retrieval target. For every
+      (image, class) pair, ``TP = min(pred, gt)`` correctly counted
+      instances, ``FN = max(0, gt - pred)`` missed instances, and
+      ``FP = max(0, pred - gt)`` over-counted instances. The aggregated
+      recall is the proportion of ground-truth objects that were
+      correctly accounted for; precision is the proportion of predicted
+      objects that were warranted.
+    """
     out: dict[str, dict[str, float]] = {}
     for cls in CLASS_NAMES:
         gts = np.array([getattr(d, f"gt_{cls}") for d in decisions], dtype=float)
@@ -627,12 +642,27 @@ def per_class_count_metrics(decisions: list[ImageDecision]) -> dict[str, dict[st
         mae = float(np.mean(np.abs(gts - preds)))
         rmse = float(np.sqrt(np.mean((gts - preds) ** 2)))
         bias = float(np.mean(preds - gts))  # positive = over-detection
+        # Object-level retrieval metrics.
+        tp = int(np.minimum(preds, gts).sum())
+        fn = int(np.maximum(0, gts - preds).sum())
+        fp = int(np.maximum(0, preds - gts).sum())
+        gt_total = int(gts.sum())
+        pred_total = int(preds.sum())
+        recall = tp / gt_total if gt_total else 0.0
+        precision = tp / pred_total if pred_total else 0.0
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
         out[cls] = {
-            "gt_total": int(gts.sum()),
-            "pred_total": int(preds.sum()),
+            "gt_total": gt_total,
+            "pred_total": pred_total,
             "mae": mae,
             "rmse": rmse,
             "bias": bias,
+            "tp": tp,
+            "fn": fn,
+            "fp": fp,
+            "recall": recall,
+            "precision": precision,
+            "f1": f1,
         }
     return out
 
@@ -703,21 +733,83 @@ def write_per_image_csv(decisions: list[ImageDecision], out_path: Path) -> None:
             )
 
 
+def _aggregate_object_metrics(class_metrics: dict[str, dict]) -> dict[str, float]:
+    """Aggregate per-class TP/FN/FP across classes into overall recall,
+    precision and F1 at the object level."""
+    tp = sum(m["tp"] for m in class_metrics.values())
+    fn = sum(m["fn"] for m in class_metrics.values())
+    fp = sum(m["fp"] for m in class_metrics.values())
+    gt_total = sum(m["gt_total"] for m in class_metrics.values())
+    pred_total = sum(m["pred_total"] for m in class_metrics.values())
+    recall = tp / gt_total if gt_total else 0.0
+    precision = tp / pred_total if pred_total else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
+    return {
+        "tp": tp,
+        "fn": fn,
+        "fp": fp,
+        "gt_total": gt_total,
+        "pred_total": pred_total,
+        "recall": recall,
+        "precision": precision,
+        "f1": f1,
+    }
+
+
 def write_per_class_csv(class_metrics: dict[str, dict], out_path: Path) -> None:
     with open(out_path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["class", "gt_total", "pred_total", "mae", "rmse", "bias"])
+        w.writerow(
+            [
+                "class",
+                "gt_total",
+                "pred_total",
+                "tp",
+                "fn",
+                "fp",
+                "recall",
+                "precision",
+                "f1",
+                "mae",
+                "rmse",
+                "bias",
+            ]
+        )
         for cls, m in class_metrics.items():
             w.writerow(
                 [
                     cls,
                     m["gt_total"],
                     m["pred_total"],
+                    m["tp"],
+                    m["fn"],
+                    m["fp"],
+                    f"{m['recall']:.3f}",
+                    f"{m['precision']:.3f}",
+                    f"{m['f1']:.3f}",
                     f"{m['mae']:.3f}",
                     f"{m['rmse']:.3f}",
                     f"{m['bias']:+.3f}",
                 ]
             )
+        # Overall aggregate row.
+        agg = _aggregate_object_metrics(class_metrics)
+        w.writerow(
+            [
+                "OVERALL",
+                agg["gt_total"],
+                agg["pred_total"],
+                agg["tp"],
+                agg["fn"],
+                agg["fp"],
+                f"{agg['recall']:.3f}",
+                f"{agg['precision']:.3f}",
+                f"{agg['f1']:.3f}",
+                "",
+                "",
+                "",
+            ]
+        )
 
 
 def write_call_log_csv(stats: SimulationStats, out_path: Path) -> None:
@@ -931,7 +1023,47 @@ def write_markdown_report(
     lines.append(f"- Total count error across all images: {total_count_err}")
     lines.append("")
 
-    lines.append("## Per-class detection accuracy\n")
+    # ── Object-level counting accuracy ────────────────────────────────
+    agg = _aggregate_object_metrics(class_metrics)
+    lines.append("## Per-class object-level counting accuracy\n")
+    lines.append(
+        "Treats every individual ground-truth instance as a retrieval "
+        "target. For each (image, class) pair, ``TP = min(pred, gt)`` "
+        "instances are correctly counted, ``FN = max(0, gt - pred)`` "
+        "instances are missed (under-detection) and "
+        "``FP = max(0, pred - gt)`` instances are spurious "
+        "(over-detection). Recall is therefore the proportion of "
+        "ground-truth objects correctly accounted for, and precision is "
+        "the proportion of predicted instances that were warranted.\n"
+    )
+    lines.append("| Class | GT | Pred | TP | FN | FP | Recall | Precision | F1 |")
+    lines.append("|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|")
+    for cls in CLASS_NAMES:
+        m = class_metrics[cls]
+        lines.append(
+            f"| {cls} | {m['gt_total']} | {m['pred_total']} | "
+            f"{m['tp']} | {m['fn']} | {m['fp']} | "
+            f"{m['recall']:.3f} | {m['precision']:.3f} | {m['f1']:.3f} |"
+        )
+    lines.append(
+        f"| **OVERALL** | **{agg['gt_total']}** | **{agg['pred_total']}** | "
+        f"**{agg['tp']}** | **{agg['fn']}** | **{agg['fp']}** | "
+        f"**{agg['recall']:.3f}** | **{agg['precision']:.3f}** | "
+        f"**{agg['f1']:.3f}** |"
+    )
+    lines.append("")
+    lines.append(
+        f"- **Object-level recall** (overall): **{agg['recall']:.3f}** "
+        f"({agg['tp']} of {agg['gt_total']} ground-truth objects correctly counted)"
+    )
+    lines.append(
+        f"- **Object-level precision** (overall): **{agg['precision']:.3f}** "
+        f"({agg['tp']} of {agg['pred_total']} predicted instances warranted)"
+    )
+    lines.append(f"- **Object-level F1** (overall): **{agg['f1']:.3f}**")
+    lines.append("")
+
+    lines.append("## Per-class detection accuracy (image-level error)\n")
     lines.append("| Class | GT total | Pred total | MAE | RMSE | Bias |")
     lines.append("|---|:---:|:---:|:---:|:---:|:---:|")
     for cls in CLASS_NAMES:
@@ -1306,13 +1438,21 @@ def main() -> int:
         f"({n_exact}/{len(decisions)} images with exact per-class match; "
         f"total count error = {total_count_err} objects)"
     )
-    print("Per-class MAE (count error):")
+    print("Per-class object-level metrics:")
     for cls in CLASS_NAMES:
         m = class_metrics[cls]
         print(
             f"  {cls:<9} GT={m['gt_total']:>3}  Pred={m['pred_total']:>3}  "
+            f"TP={m['tp']:>3}  FN={m['fn']:>3}  FP={m['fp']:>3}  "
+            f"R={m['recall']:.3f}  P={m['precision']:.3f}  F1={m['f1']:.3f}  "
             f"MAE={m['mae']:.2f}  bias={m['bias']:+.2f}"
         )
+    agg = _aggregate_object_metrics(class_metrics)
+    print(
+        f"  OVERALL   GT={agg['gt_total']:>3}  Pred={agg['pred_total']:>3}  "
+        f"TP={agg['tp']:>3}  FN={agg['fn']:>3}  FP={agg['fp']:>3}  "
+        f"R={agg['recall']:.3f}  P={agg['precision']:.3f}  F1={agg['f1']:.3f}"
+    )
     aa_kj = stats.always_accept_total_j / 1000
     wo_kj = stats.weight_only_total_j / 1000
     sm_kj = stats.smart_total_j / 1000

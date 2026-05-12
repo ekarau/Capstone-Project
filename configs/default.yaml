@@ -71,39 +71,23 @@ model:
       epochs: 150
 
 # ──────────────────────────────────────────────────────────────
-#  Occupancy estimation
+#  Occupancy estimation — per-class footprint (thesis §3.5, Table 3.1)
 # ──────────────────────────────────────────────────────────────
-# method: "coefficient" | "footprint" | "bev_mask"
-#   coefficient → bbox_area_px × class_coef (fast camera-naive baseline)
-#   footprint   → project bbox bottom-mid to floor, union of disks
-#                 (requires homography)
-#   bev_mask    → birds-eye-view warp + per-class footprint mask
-#                 (requires homography; visual & numeric stay in sync)
+# A_occupied = Σ_c (n_c × ā_c);   ρ = min(A_occupied / A_cabin, 1)
+# Headline values used by scripts/run_simulation.py and demo/app.py.
 occupancy:
-  method: bev_mask
-
-  # Method 1 — fixed bbox-area weights (thesis §3.10, normalized to m²)
-  area_coefficients:
-    person: 0.30
-    stroller: 0.65
-    luggage: 0.70
-    box: 0.55
-
-  # Methods 2 & 3 — per-class circular footprint radius on the floor
-  footprint_radius_m:
-    person: 0.18                # ≈ 36 cm shoulder width / 2
-    stroller: 0.30
-    luggage: 0.22
-    box: 0.20
+  footprint_m2:
+    person: 0.20                # ISO 8100-32:2020 §6.4; EN 81-20:2020 §5.4.2.1.1
+    stroller: 0.45              # EN 1888-1:2018 single-pushchair survey mean
+    luggage: 0.20               # IATA Resolution 753 cabin baggage (56×36 cm)
+    box: 0.20                   # Industry e-commerce parcel mean
 
 # ──────────────────────────────────────────────────────────────
-#  Camera calibration
+#  Camera
 # ──────────────────────────────────────────────────────────────
 camera:
   frame_width_px: 640
   frame_height_px: 480
-  homography_path: configs/homography.yaml
-  bev_resolution_px: 400        # BEV map size (square)
 
 # ──────────────────────────────────────────────────────────────
 #  Augmentation

@@ -437,6 +437,11 @@ def render_timeline_tab() -> None:
         df["cumulative_weight_only_kj"] = df["cumulative_always_accept_kj"]
     if "smart_decision" not in df.columns and "decision" in df.columns:
         df["smart_decision"] = df["decision"]
+    # Old 2-policy runs predate the explicit weight_only_decision column;
+    # synthesise an "always accept" stand-in so the per-call vs-weight-only
+    # savings degenerate to vs always-accept (no weight gate present).
+    if "weight_only_decision" not in df.columns:
+        df["weight_only_decision"] = "accept"
 
     # ─── Summary banner ──────────────────────────────────────────────
     n_calls = len(df)
@@ -546,13 +551,25 @@ def render_timeline_tab() -> None:
 
     view = df[df["outcome"].isin(outcome_filter)].head(max_rows).copy()
 
-    # Conditional saving: only bypass decisions actually save anything.
-    # Accept (TN/FN) and FP-bypass that misses the room contribute 0.
-    # The energy/time figures here are the *per-call* savings; the
-    # column header makes the unit explicit.
-    is_bypass = view["smart_decision"] == "bypass"
-    view["Energy saved (kJ)"] = view["stop_overhead_kj"].where(is_bypass, 0.0)
-    view["Time saved (s)"] = is_bypass.map(lambda b: OVERHEAD_S if b else 0)
+    # Per-call savings, split by which baseline they are measured against
+    # so that the column sums reconcile with the two headline metrics
+    # above (Energy saved vs always-accept and vs weight-only).
+    #
+    #   * vs always-accept: smart saves the per-stop overhead on every
+    #     call where it bypasses (always-accept never bypasses, so any
+    #     smart bypass is a real saving against it).
+    #   * vs weight-only: smart only adds value when it bypasses a cabin
+    #     that the weight-only baseline would have accepted, i.e. an
+    #     area-only-full cabin. Heavy cabins that both policies bypass
+    #     contribute 0 here, because weight-only would have skipped them
+    #     anyway.
+    is_smart_bypass = view["smart_decision"] == "bypass"
+    is_weight_bypass = view["weight_only_decision"] == "bypass"
+    view["Saved vs always-accept (kJ)"] = view["stop_overhead_kj"].where(is_smart_bypass, 0.0)
+    view["Saved vs weight-only (kJ)"] = view["stop_overhead_kj"].where(
+        is_smart_bypass & ~is_weight_bypass, 0.0
+    )
+    view["Time saved (s)"] = is_smart_bypass.map(lambda b: OVERHEAD_S if b else 0)
 
     view = view.rename(
         columns={
@@ -574,7 +591,8 @@ def render_timeline_tab() -> None:
             "Dir.",
             "Decision",
             "Outcome",
-            "Energy saved (kJ)",
+            "Saved vs always-accept (kJ)",
+            "Saved vs weight-only (kJ)",
             "Time saved (s)",
             "Image",
         ]
