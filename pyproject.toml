@@ -107,8 +107,12 @@ ignore = [
     "N806",    # non-lowercase variable in function (e.g. `H`)
     "N812",    # lowercase imported as non-lowercase
     "N815",    # mixed-case in class scope
-    # Unicode characters are intentional in docstrings / comments
-    # (×, →, ≥, m², etc. carry scientific meaning).
+    # Unicode characters are intentional in docstrings / comments / strings.
+    # We render scientific notation (×, →, ≥, m², ρ, τ, ā, –, −, …) inside
+    # human-facing strings (Markdown reports, Word documents, console output),
+    # so the multiplication sign, Greek letters, en/em dashes and minus
+    # sign are deliberate rather than typos.
+    "RUF001",  # ambiguous unicode in strings
     "RUF002",  # ambiguous unicode in docstrings
     "RUF003",  # ambiguous unicode in comments
 ]

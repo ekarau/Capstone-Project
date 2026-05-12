@@ -1345,7 +1345,7 @@ def main() -> int:
     saved_t_vs_wo = wo_s - sm_s
     pct_t_vs_aa = 100.0 * saved_t_vs_aa / aa_s if aa_s else 0.0
     pct_t_vs_wo = 100.0 * saved_t_vs_wo / wo_s if wo_s else 0.0
-    print(f"Time (stop-time overhead):")
+    print("Time (stop-time overhead):")
     print(f"  always_accept = {aa_s:7.0f} s ({aa_s / 60:.1f} min)")
     print(f"  weight_only   = {wo_s:7.0f} s ({wo_s / 60:.1f} min)")
     print(f"  smart         = {sm_s:7.0f} s ({sm_s / 60:.1f} min)")

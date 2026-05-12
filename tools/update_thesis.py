@@ -51,15 +51,14 @@ Changes applied:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import sys
-from copy import deepcopy
 from pathlib import Path
 
 import docx
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.text.paragraph import Paragraph
-
 
 # ──────────────────────────────────────────────────────────────────────
 #  Defaults
@@ -146,10 +145,8 @@ def _insert_table_after(
     document = anchor.part.document
     n_cols = len(headers)
     tbl = document.add_table(rows=1 + len(rows), cols=n_cols)
-    try:
+    with contextlib.suppress(KeyError):
         tbl.style = document.styles[style_name]
-    except KeyError:
-        pass
 
     # Header row.
     for j, h in enumerate(headers):
@@ -1075,18 +1072,23 @@ def replace_algorithm_block(doc) -> None:
     if title is None:
         return
 
-    # Remove the next ~10 paragraphs that hold the broken pseudocode lines.
-    # The original document inlines Algorithm 1 over paragraphs index ~379–388.
-    cur = title.getnext_paragraph() if hasattr(title, "getnext_paragraph") else None
-    # Walk forward removing paragraphs that look like algorithm pseudocode.
+    # Walk forward removing paragraphs that look like the original
+    # pseudocode (the broken Algorithm 1 block spans ~10 paragraphs in
+    # the source document, indices ~379-388).
     next_p_xml = title._p.getnext()
     removed = 0
     while next_p_xml is not None and removed < 12:
         # Stop at the next heading-styled paragraph.
         text_nodes = next_p_xml.findall(qn("w:r") + "/" + qn("w:t"))
         text = "".join(t.text or "" for t in text_nodes).strip()
-        # Heuristic: pseudocode lines start with a digit and a colon.
-        if text and (text[0].isdigit() and ":" in text[:6]) or text.startswith("END IF") or text in (""):
+        # Heuristic: pseudocode lines start with a digit and a colon, or
+        # are empty / are the trailing "END IF" marker.
+        is_pseudocode = (
+            (text and text[0].isdigit() and ":" in text[:6])
+            or text.startswith("END IF")
+            or not text
+        )
+        if is_pseudocode:
             to_remove = next_p_xml
             next_p_xml = next_p_xml.getnext()
             to_remove.getparent().remove(to_remove)

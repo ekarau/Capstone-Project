@@ -33,12 +33,11 @@ Specifically:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import sys
-from copy import deepcopy
 from pathlib import Path
 
 import docx
-from docx.enum.text import WD_BREAK
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt
@@ -181,11 +180,9 @@ def apply_typography_overrides(doc) -> None:
     # Table and figure captions: bold, 11pt.
     for p in doc.paragraphs:
         text = p.text.strip()
-        if text.startswith("Table ") and (
+        if (text.startswith("Table ") and (
             text[len("Table "): len("Table ") + 1].isdigit()
-        ):
-            _apply_run_font(p, size_pt=11, bold=True)
-        elif text.startswith("Fig. ") or text.startswith("Figure "):
+        )) or text.startswith("Fig. ") or text.startswith("Figure "):
             _apply_run_font(p, size_pt=11, bold=True)
 
     # References list: 11pt (not bold). Find REFERENCES heading and walk
@@ -286,9 +283,7 @@ def _looks_like_reference_continuation(text: str) -> bool:
     if first_word[0].islower():
         return True
     # Single-token publisher line ("Routledge.").
-    if len(stripped.split()) <= 2 and stripped.endswith("."):
-        return True
-    return False
+    return len(stripped.split()) <= 2 and stripped.endswith(".")
 
 
 def sort_references_alphabetically(doc) -> None:
@@ -484,10 +479,8 @@ def apply_caption_style(doc) -> None:
             or text.startswith("[Figure ")
         )
         if is_table or is_figure:
-            try:
+            with contextlib.suppress(Exception):
                 p.style = caption_style
-            except Exception:
-                pass
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -501,6 +494,65 @@ CHAPTER_TITLES = {
     "RESULTS",
     "DISCUSSION AND CONCLUSION",
 }
+
+
+def fix_heading_numbering_indents(doc) -> None:
+    """Patch the multilevel-list definition in ``numbering.xml`` so that
+    auto-numbered headings (``3.1``, ``3.2``, ``4.1`` …) sit flush with
+    the left margin instead of being pushed one tab to the right.
+
+    The original template used ``<w:ind w:left="X" w:hanging="X"/>`` and
+    ``<w:suff w:val="tab"/>`` for every Heading-tied level, which makes
+    Word render the heading as ``[number]<tab>[text]``, with the text
+    aligned at column X. Setting ``left=0 hanging=0`` and replacing the
+    tab suffix with a single space brings the text right next to the
+    number, e.g. ``3.1 Methodological Framework``.
+    """
+    try:
+        numbering_part = doc.part.numbering_part
+    except (AttributeError, KeyError):
+        return
+    if numbering_part is None:
+        return
+    numbering_root = numbering_part.element
+
+    patched = 0
+    for lvl in numbering_root.iter(qn("w:lvl")):
+        pStyle = lvl.find(qn("w:pStyle"))
+        if pStyle is None:
+            continue
+        style_val = pStyle.get(qn("w:val"), "")
+        if not style_val.startswith("Heading"):
+            continue
+
+        # 1. Replace the "tab" suffix with a single space.
+        suff = lvl.find(qn("w:suff"))
+        if suff is None:
+            suff = OxmlElement("w:suff")
+            # Insert near the top of the level element.
+            lvl.insert(0, suff)
+        suff.set(qn("w:val"), "space")
+
+        # 2. Zero out the indent inside <w:pPr>.
+        ppr = lvl.find(qn("w:pPr"))
+        if ppr is None:
+            ppr = OxmlElement("w:pPr")
+            lvl.append(ppr)
+        ind = ppr.find(qn("w:ind"))
+        if ind is None:
+            ind = OxmlElement("w:ind")
+            ppr.append(ind)
+        ind.set(qn("w:left"), "0")
+        ind.set(qn("w:hanging"), "0")
+        ind.set(qn("w:firstLine"), "0")
+        # Drop any stray start/end attributes that override the zero.
+        for stray in (qn("w:start"), qn("w:end")):
+            if stray in ind.attrib:
+                del ind.attrib[stray]
+
+        patched += 1
+
+    print(f"  patched {patched} heading-tied multilevel-list levels")
 
 
 def reset_heading_indents(doc) -> None:
@@ -528,10 +580,8 @@ def reset_heading_indents(doc) -> None:
         pf.left_indent = Inches(0)
         pf.first_line_indent = Inches(0)
         # Clear all tab stops on the style.
-        try:
+        with contextlib.suppress(Exception):
             pf.tab_stops.clear_all()
-        except Exception:
-            pass
         # Also strip the underlying XML <w:ind> element so it doesn't
         # carry hidden hanging-indent values.
         ppr = style.element.find(qn("w:pPr"))
@@ -620,6 +670,9 @@ def main() -> int:
 
     print("[info] resetting heading indents (fixes 3.1, 3.2 tab-shifted bug) …")
     reset_heading_indents(doc)
+
+    print("[info] patching multilevel-list (numbering.xml) for headings …")
+    fix_heading_numbering_indents(doc)
 
     print("[info] adding page breaks before each chapter …")
     add_chapter_page_breaks(doc)
