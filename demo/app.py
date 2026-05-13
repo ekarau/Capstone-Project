@@ -33,6 +33,8 @@ import numpy as np
 import streamlit as st
 from PIL import Image
 
+from src.perception.occupancy import ClassFootprintOccupancy
+
 # ──────────────────────────────────────────────────────────────────────
 #  Configuration
 # ──────────────────────────────────────────────────────────────────────
@@ -119,19 +121,21 @@ def run_analysis(
                 }
             )
 
-    counts: dict[str, int] = {}
-    breakdown: dict[str, float] = {}
-    occupied = 0.0
+    # Aggregate per-class counts, then delegate the footprint→ratio
+    # computation to the thesis §3.5 estimator. Classes with no
+    # configured footprint are filtered out by ``ClassFootprintOccupancy``.
+    raw_counts: dict[str, int] = {}
     for det in detections:
         cls = det["class"]
-        a = class_areas.get(cls, 0.0)
-        if a <= 0:
-            continue
-        counts[cls] = counts.get(cls, 0) + 1
-        breakdown[cls] = breakdown.get(cls, 0.0) + a
-        occupied += a
+        raw_counts[cls] = raw_counts.get(cls, 0) + 1
 
-    occupancy_ratio = min(occupied / cabin_m2, 1.0) if cabin_m2 > 0 else 0.0
+    occupancy = ClassFootprintOccupancy(
+        footprints_m2=class_areas, cabin_m2=cabin_m2
+    ).compute(raw_counts)
+    counts: dict[str, int] = dict(occupancy.counts)
+    breakdown: dict[str, float] = dict(occupancy.breakdown_m2)
+    occupied = occupancy.occupied_m2
+    occupancy_ratio = occupancy.ratio
     weight_ratio = weight_kg / max_weight_kg if max_weight_kg > 0 else 0.0
 
     # PDF Algorithm 1 — weight gate first, then area gate.

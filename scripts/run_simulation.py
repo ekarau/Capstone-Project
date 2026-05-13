@@ -81,6 +81,7 @@ from src.energy.consumption import (
     StartProfile,
     estimate_stop_energy,
 )
+from src.perception.occupancy import ClassFootprintOccupancy
 
 # ──────────────────────────────────────────────────────────────────────
 #  Constants — keep aligned with notebooks/02_train.ipynb and configs/
@@ -169,8 +170,14 @@ class ImageDecision:
 
 
 def _occupancy_ratio_from_counts(counts: dict[str, int], cabin_m2: float) -> float:
-    occ = sum(counts[c] * CLASS_AREAS_M2[c] for c in CLASS_NAMES)
-    return min(occ / cabin_m2, 1.0) if cabin_m2 > 0 else 0.0
+    """Thin adapter — delegates to :class:`ClassFootprintOccupancy`
+    (thesis §3.5). The formula lives in
+    ``src/perception/occupancy.py``; this wrapper exists only so the
+    existing call sites in this script keep their original signature.
+    """
+    return ClassFootprintOccupancy(
+        footprints_m2=CLASS_AREAS_M2, cabin_m2=cabin_m2
+    ).estimate_from_counts(counts)
 
 
 def _cabin_load_kg_from_counts(counts: dict[str, int]) -> float:
