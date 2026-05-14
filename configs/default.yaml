@@ -37,8 +37,10 @@ thresholds:
 # ──────────────────────────────────────────────────────────────
 #  Detection classes — must match thesis §3.10
 # ──────────────────────────────────────────────────────────────
+# NOTE: `person` is detected by the dedicated head model (best_head.pt),
+# not by this four-class detector. The object detector below covers only
+# the three non-person classes.
 classes:
-  - person
   - stroller
   - luggage
   - box
@@ -77,7 +79,9 @@ model:
 # Headline values used by scripts/run_simulation.py and demo/app.py.
 occupancy:
   footprint_m2:
-    person: 0.20                # ISO 8100-32:2020 §6.4; EN 81-20:2020 §5.4.2.1.1
+    # `person` (0.20 m² — ISO 8100-32:2020 §6.4; EN 81-20:2020 §5.4.2.1.1) is
+    # supplied at runtime by the head model pipeline (see scripts/run_simulation.py),
+    # not by this detector. Keep it in the runtime merge but NOT here.
     stroller: 0.45              # EN 1888-1:2018 single-pushchair survey mean
     luggage: 0.20               # IATA Resolution 753 cabin baggage (56×36 cm)
     box: 0.20                   # Industry e-commerce parcel mean
@@ -95,10 +99,8 @@ camera:
 augmentation:
   enabled: true
   # Per-class augmentation multiplier (boost rare or hard classes).
-  # NOTE: person=3 — initial training had recall 0.47; occluded
-  # crowded-cabin scenes need additional diversity.
+  # `person` is no longer trained by this detector, so it is omitted.
   per_class_multiplier:
-    person: 3                  # 1 → 3 (counter occlusion)
     stroller: 2
     luggage: 2
     box: 5

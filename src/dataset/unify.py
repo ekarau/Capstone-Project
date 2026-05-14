@@ -1,7 +1,12 @@
 """Multi-source YOLO dataset unifier — leakage-safe edition.
 
-Merges 10 raw Roboflow datasets into a single, consistently labeled
-YOLO dataset with 4 target classes (0:person, 1:stroller, 2:luggage, 3:box).
+Merges raw Roboflow datasets into a single, consistently labeled
+YOLO dataset with 3 target classes (0:stroller, 1:luggage, 2:box).
+
+`person` is intentionally NOT part of this dataset: person counts are
+supplied at inference time by the dedicated head model (`best_head.pt`),
+so person-only source datasets are dropped and person labels in
+multi-class sources are filtered out via `class_map` -> None.
 
 LEAKAGE-SAFE DESIGN:
   * Many sources contain video frames (e.g. `6Z6jTNfqkUSqM_3D_mp4-0`,
@@ -35,7 +40,7 @@ logger = get_logger(__name__)
 
 
 # Final unified class list (order = id)
-TARGET_CLASSES: list[str] = ["person", "stroller", "luggage", "box"]
+TARGET_CLASSES: list[str] = ["stroller", "luggage", "box"]
 TARGET_ID = {name: idx for idx, name in enumerate(TARGET_CLASSES)}
 
 
@@ -68,39 +73,16 @@ class SourceSpec:
 #  Verified against actual data.yaml of each Roboflow export.
 # ─────────────────────────────────────────────────────────────────────
 SOURCES: list[SourceSpec] = [
-    # User's reference "real-cabin scenario" — held out 100% as test set.
-    SourceSpec(
-        folder="Elevator.yolov8",
-        class_map={0: "person"},
-        split_role="test_only",
-    ),
-    # Person datasets — group-stratified split
-    SourceSpec(
-        folder="-People Counting.yolov8",
-        class_map={0: "person"},
-    ),
-    SourceSpec(
-        folder="people ditection in elevator.yolov8",
-        class_map={0: "person"},
-    ),
-    SourceSpec(
-        folder="top down view.yolov8",
-        class_map={0: "person"},
-        # Only 39 images — splitting into train/val/test would yield empty sets.
-        # All go to train (val_ratio + test_ratio = 0).
-        train_ratio=1.0,
-        val_ratio=0.0,
-        test_ratio=0.0,
-    ),
-    SourceSpec(
-        folder="normal3.yolov8",
-        class_map={0: "person"},
-    ),
-    # Stroller multi-class source (person/stroller/luggage subset only)
+    # NOTE: person-only sources (Elevator.yolov8, -People Counting.yolov8,
+    # people ditection in elevator.yolov8, top down view.yolov8, normal3.yolov8)
+    # are intentionally excluded — this model no longer trains on `person`.
+    # Person counts are provided at inference by best_head.pt.
+    #
+    # Stroller multi-class source — keep stroller/luggage; drop person.
     SourceSpec(
         folder="Stroller.yolov8",
         class_map={
-            0: "person",  # 0-human
+            0: None,  # 0-human (dropped — head model handles person)
             1: None,  # 1-wheelchair
             2: "luggage",  # 2-suitcase
             3: "stroller",  # 3-stroller
@@ -132,7 +114,7 @@ SOURCES: list[SourceSpec] = [
     # 130 luggage/222 box. scripts/import_lastdataset.py ile temizlendi.
     SourceSpec(
         folder="lastdataset_extra.yolov8",
-        class_map={0: "person", 1: "stroller", 2: "luggage", 3: "box"},
+        class_map={0: None, 1: "stroller", 2: "luggage", 3: "box"},
     ),
 ]
 
