@@ -90,3 +90,8 @@ results/simulation/*/
 *.log
 notebook_cell*_out*.png
 05_train_v2_area.ipynb     # root copy with Colab outputs (canonical is in notebooks/)
+
+# ──────────────────────────────────────────────────────────────────────
+#  Local tooling state (Claude Code worktrees, editor caches, etc.)
+# ──────────────────────────────────────────────────────────────────────
+.claude/
