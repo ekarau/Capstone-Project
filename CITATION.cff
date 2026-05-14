@@ -13,6 +13,10 @@ authors:
   - given-names: Vedat Efe
     family-names: Gezer
     affiliation: Istinye University, Department of Software Engineering
+advisor:
+  given-names: Bahman
+  family-names: Arasteh Abbasabad
+  affiliation: Istinye University, Department of Software Engineering
 contact:
   - given-names: Ege
     family-names: Karaurgan

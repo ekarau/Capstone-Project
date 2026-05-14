@@ -32,7 +32,6 @@ from pathlib import Path
 import numpy as np
 import streamlit as st
 from PIL import Image
-
 from src.perception.occupancy import ClassFootprintOccupancy
 
 # ──────────────────────────────────────────────────────────────────────
@@ -129,9 +128,9 @@ def run_analysis(
         cls = det["class"]
         raw_counts[cls] = raw_counts.get(cls, 0) + 1
 
-    occupancy = ClassFootprintOccupancy(
-        footprints_m2=class_areas, cabin_m2=cabin_m2
-    ).compute(raw_counts)
+    occupancy = ClassFootprintOccupancy(footprints_m2=class_areas, cabin_m2=cabin_m2).compute(
+        raw_counts
+    )
     counts: dict[str, int] = dict(occupancy.counts)
     breakdown: dict[str, float] = dict(occupancy.breakdown_m2)
     occupied = occupancy.occupied_m2
