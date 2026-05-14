@@ -889,8 +889,8 @@ def write_energy_csv(stats: SimulationStats, out_path: Path) -> None:
       * smart        (proposed, Stages 1 + 2)
 
     Two deltas are recorded:
-      * smart_vs_always   — ceiling tasarrufu (max teorik fayda)
-      * smart_vs_weight   — bizim gerçek katkımız (over current industry)
+      * smart_vs_always   — ceiling savings (max theoretical benefit)
+      * smart_vs_weight   — the actual contribution (over current industry)
     """
     aa_j = stats.always_accept_total_j
     wo_j = stats.weight_only_total_j

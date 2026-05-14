@@ -11,6 +11,6 @@ paths:
 
 model:
   variant: yolov8s
-  batch_size: 32                # Colab T4 için
+  batch_size: 32                # tuned for Colab T4
   epochs: 100
   pretrained_weights: yolov8s.pt

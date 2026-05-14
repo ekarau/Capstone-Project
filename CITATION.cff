@@ -21,13 +21,10 @@ abstract: >-
   A computer-vision pipeline that estimates elevator cabin
   occupancy from a single CCTV frame and decides whether
   incoming hall calls should be served or bypassed. The
-  system combines a YOLOv8 object detector (trained on a
-  unified four-class dataset of persons, strollers, luggage,
-  and boxes) with a class-based footprint area estimator
-  grounded in TS EN 81-20 / ISO 8100 elevator capacity
-  standards. A power-consumption model after Tukia et al.
-  (2018) quantifies the energy savings of the proposed
-  control policy relative to a weight-only baseline.
+  system combines a YOLOv8 object detector (with a four-class
+  scheme covering persons, strollers, luggage, and boxes) and
+  a class-based footprint area estimator anchored to
+  international elevator-capacity standards.
 keywords:
   - computer vision
   - YOLOv8
@@ -41,36 +38,3 @@ url: https://github.com/ekarau/Capstone-Project
 repository-code: https://github.com/ekarau/Capstone-Project
 version: 0.2.0
 date-released: 2026-05-08
-references:
-  - type: article
-    authors:
-      - family-names: Tukia
-        given-names: T.
-      - family-names: Uimonen
-        given-names: S.
-      - family-names: Siikonen
-        given-names: M.-L.
-      - family-names: Donghi
-        given-names: C.
-      - family-names: Lehtonen
-        given-names: M.
-    title: >-
-      High-resolution modeling of elevator power consumption
-    journal: Journal of Building Engineering
-    year: 2018
-  - type: article
-    authors:
-      - family-names: Andrei
-        given-names: A.
-      - family-names: Ruokokoski
-        given-names: J.
-    title: >-
-      Load-area-based elevator group control with
-      computer-vision occupancy sensing
-    year: 2022
-  - type: standard
-    title: >-
-      EN 81-20:2020 — Safety rules for the construction and
-      installation of lifts
-    institution: European Committee for Standardization
-    year: 2020
