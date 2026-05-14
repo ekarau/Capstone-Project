@@ -21,7 +21,7 @@ We add a second signal: **what the camera sees**. If the floor is too full, the 
 ```
 CCTV frame
     │
-    ├──► YOLOv8 four-class detector ──► persons, strollers, luggage, boxes
+    ├──► YOLOv8 three-class detector ──►  strollers, luggage, boxes
     │
     └──► YOLOv8 head detector       ──► person count (occlusion-resilient)
                 │
@@ -144,7 +144,7 @@ The headline result is **smart vs weight-only**: the area gate adds **18.0 % ext
 
 | Model | Precision | Recall | mAP\@50 | mAP\@50–95 |
 |---|:---:|:---:|:---:|:---:|
-| 4-class (`best_v2.pt`) | 0.953 | 0.822 | 0.877 | 0.667 |
+| 3-class (`best_v3.pt`) | 0.961 | 0.885 | 0.915 | 0.746 |
 | Head (`best_head.pt`)  | 0.852 | 0.692 | 0.767 | 0.519 |
 
 ## Repository layout
