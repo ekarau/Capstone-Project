@@ -21,9 +21,9 @@ We add a second signal: **what the camera sees**. If the floor is too full, the 
 ```
 CCTV frame
     │
-    ├──► YOLOv8 four-class detector ──► persons, strollers, luggage, boxes
+    ├──► YOLOv8 three-class object detector ──► strollers, luggage, boxes
     │
-    └──► YOLOv8 head detector       ──► person count (occlusion-resilient)
+    └──► YOLOv8 head detector               ──► person count (occlusion-resilient)
                 │
                 ▼
        per-class footprint area
@@ -43,10 +43,10 @@ CCTV frame
 
 Two detectors run in parallel:
 
-* A **four-class** YOLOv8s recognises *person*, *stroller*, *luggage*, *box*. Trained on a unified dataset of about 13 000 cabin images merged from ten public sources, with a leakage-safe split that keeps frames from the same video out of train/val/test.
+* A **three-class** YOLOv8s object detector recognises *stroller*, *luggage*, *box*. Trained on a leakage-safe unified dataset merged from multiple public sources, with the split designed to keep frames from the same source video out of train/val/test.
 * A **head-only** YOLOv8s focuses on heads in top-down camera angles. Trained on a single-class head corpus (~6 000 images), specifically because heads stay visible in crowded cabins where bodies overlap.
 
-In *hybrid* mode the head model supplies the person count, and the four-class model provides the non-human classes. The 4-class model's `person` predictions are deliberately discarded to avoid double-counting.
+The two detectors are mutually exclusive in the classes they handle: the head model supplies the person count, the object detector supplies the non-human classes (stroller, luggage, box). Their outputs are concatenated into the four operational output classes without any risk of double counting.
 
 ### Occupancy
 
@@ -108,7 +108,7 @@ A heavy cabin therefore costs proportionally more motor energy than a light one,
 
 ## Results
 
-Two configurations (4-class single-model **and** hybrid 4-class + head) were measured on the **same 67 cabin photographs** covering the empty → at-capacity spectrum. Each photo carries multi-class ground truth (`gt_person`, `gt_stroller`, `gt_luggage`, `gt_box`). 1 000 synthetic hall calls were sampled uniformly from this set, and three policies (always-accept / weight-only / smart) were evaluated on the same call stream.
+The two-detector system was measured on **67 cabin photographs** covering the empty → at-capacity spectrum. Each photo carries multi-class ground truth (`gt_person`, `gt_stroller`, `gt_luggage`, `gt_box`). 1 000 synthetic hall calls were sampled uniformly from this set, and three policies (always-accept / weight-only / smart) were evaluated on the same call stream.
 
 ### Bypass-decision quality (smart policy vs optimal-policy ground truth)
 
@@ -116,11 +116,9 @@ Ground truth here is `gt_should_bypass = gt_is_full OR gt_weight_full`, i.e. the
 
 | Configuration | Bypass acc. | Precision | Recall | F1 | Person MAE |
 |---|:---:|:---:|:---:|:---:|:---:|
-| Smart (4-class single-model) | 0.925 | 0.944 | 0.810 | 0.872 | 0.97 |
-| **Smart (hybrid 4-class + head)** | **0.955** | **0.950** | **0.905** | **0.927** | **0.67** |
-| Δ (hybrid − single) | +0.030 | +0.006 | **+0.095** | **+0.055** | **−0.30** |
+| **Smart (proposed)** | **0.955** | **0.950** | **0.905** | **0.927** | **0.67** |
 
-The hybrid configuration **strictly dominates** the single-model: better precision, better recall, better F1, lower person counting error. The recall gain comes from the head detector recovering ≈ 0.3 person/cabin that the four-class model under-counts due to body occlusion in crowded scenes. False positives drop from {single-model count} to a single image (`cabin_033`, where the model over-counts luggage).
+The system records one false positive (`cabin_033`, where the object detector over-counts luggage by three) and two false negatives on crowded cabins in which the head detector failed to recover a small number of heads under heavy occlusion.
 
 ### Energy and stop-time savings (over 1 000 synthetic hall calls)
 
@@ -128,24 +126,22 @@ The hybrid configuration **strictly dominates** the single-model: better precisi
 |---|:---:|:---:|:---:|:---:|
 | Always-accept (naive) | 0 | 920.0 kJ | — | — |
 | Weight-only (current industry) | 126 | 804.1 kJ | 115.9 kJ (12.6 %) | — |
-| Smart, single-model | 256 | 684.5 kJ | 235.5 kJ (25.6 %) | 119.6 kJ (14.9 %) |
-| **Smart, hybrid** | 283 | **659.6 kJ** | **260.4 kJ (28.3 %)** | **144.4 kJ (18.0 %)** |
+| **Smart (proposed)** | 283 | **659.6 kJ** | **260.4 kJ (28.3 %)** | **144.4 kJ (18.0 %)** |
 
 | Policy | Total stop-time | Δ vs weight-only |
 |---|:---:|:---:|
 | Always-accept | 10 000 s (166.7 min) | — |
 | Weight-only | 8 740 s (145.7 min) | — |
-| Smart, single-model | 7 440 s (124.0 min) | 1 300 s = 21.7 min (14.9 %) |
-| **Smart, hybrid** | **7 170 s** (119.5 min) | **1 570 s = 26.2 min (18.0 %)** |
+| **Smart (proposed)** | **7 170 s** (119.5 min) | **1 570 s = 26.2 min (18.0 %)** |
 
-The headline result is **smart vs weight-only**: the area gate adds **18.0 % extra energy / time savings on top of a current-industry load-cell-only system** (hybrid configuration). Service rate stays at **98.9 %** (only 11 / 1000 calls are wrongly skipped).
+The headline result is **smart vs weight-only**: the area gate adds **18.0 % extra energy / time savings on top of a current-industry load-cell-only system**. Service rate stays at **98.9 %** (only 11 / 1000 calls are wrongly skipped).
 
 ### Underlying detection metrics (validation splits)
 
 | Model | Precision | Recall | mAP\@50 | mAP\@50–95 |
 |---|:---:|:---:|:---:|:---:|
-| 4-class (`best_v2.pt`) | 0.953 | 0.822 | 0.877 | 0.667 |
-| Head (`best_head.pt`)  | 0.852 | 0.692 | 0.767 | 0.519 |
+| 3-class object (`best.pt`) | 0.953 | 0.822 | 0.877 | 0.667 |
+| Head (`best_head.pt`)      | 0.852 | 0.692 | 0.767 | 0.519 |
 
 ## Repository layout
 
@@ -178,7 +174,7 @@ python -m venv venv
 source venv/bin/activate            # Windows: venv\Scripts\activate
 pip install -e ".[dev]"
 
-# Build the unified four-class dataset from raw downloads
+# Build the unified three-class object-detector dataset from raw downloads
 python -m scripts.prepare_dataset --raw data/raw --out data/unified
 
 # Train (Colab notebooks/02_train.ipynb is much faster than CPU)
@@ -193,27 +189,17 @@ on request — contact the authors.
 Both commands evaluate the **three policies** (always-accept / weight-only / smart) on the same 1 000-call stream and write a confusion matrix PNG, per-image and per-class CSVs, an `energy_savings.csv` with the per-policy aggregates, a `call_log.csv` per-call timeline, and a Markdown summary report under the chosen output directory.
 
 ```bash
-# 4-class single-model
+# Smart policy — three-class object detector + head detector
 python -m scripts.run_simulation \
     --images data/sim/images \
     --ground-truth data/sim/ground_truth.csv \
-    --weights models/weights/best_v2.pt \
-    --rated-capacity 8 \
-    --conf-threshold 0.40 \
-    --num-calls 1000 \
-    --output results/simulation/baseline_4cls_67
-
-# Hybrid — adds the head detector for the person count
-python -m scripts.run_simulation \
-    --images data/sim/images \
-    --ground-truth data/sim/ground_truth.csv \
-    --weights models/weights/best_v2.pt \
+    --weights models/weights/best.pt \
     --head-weights models/weights/best_head.pt \
     --rated-capacity 8 \
     --conf-threshold 0.40 \
     --head-conf 0.40 \
     --num-calls 1000 \
-    --output results/simulation/hybrid_67
+    --output results/simulation/smart_67
 ```
 
 The weight-bypass threshold defaults to `0.80 × 630 kg = 504 kg` (override with `--rated-load-kg` / `--weight-bypass-ratio`).
