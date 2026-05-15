@@ -785,7 +785,12 @@ def render_batch_tab(cfg: dict) -> None:
             counting_acc = f"{float(m2.group(1)) * 100:.1f}%"
 
     st.markdown("### Headline metrics")
-    m1, m2, m3, m4, m5 = st.columns(5)
+    st.caption(
+        "Detection and decision quality on the 67-image curated set. "
+        "Energy- and stop-time savings over the 1 000 synthetic hall "
+        "calls are reported in the **Call Timeline** tab."
+    )
+    m1, m2, m3 = st.columns(3)
     m1.metric(
         "✅ Decision accuracy",
         bypass_acc,
@@ -804,39 +809,6 @@ def render_batch_tab(cfg: dict) -> None:
         ),
     )
     m3.metric(
-        "⚡ Energy saved",
-        f"{energy.get('energy_saved_pct', '0')} %",
-        f"{float(energy.get('energy_saved_kj', 0)):.1f} kJ",
-        help=(
-            "Stop-overhead energy avoided by the smart policy. Counts only "
-            "the door cycle + idle-stop time at the bypassed floor — the "
-            "trip's running energy is shared with other accepted calls."
-        ),
-    )
-    if "time_saved_min" in energy:
-        m4.metric(
-            "⏱ Time saved",
-            f"{energy.get('time_saved_pct', '0')} %",
-            f"{float(energy.get('time_saved_min', 0)):.1f} min",
-            help=(
-                "Stop-time avoided by the smart policy. Each unnecessary "
-                "stop costs ~10 s (door open + close + idle transfer) "
-                "under the default Tukia (2018) parameters; matches "
-                "Barney (2003) and Strakosch & Caporale (2010) handbook "
-                "values."
-            ),
-        )
-    else:
-        m4.metric(
-            "⏱ Time saved",
-            "—",
-            help=(
-                "This run pre-dates the stop-time accounting feature. "
-                "Re-run the simulation from the 'Run a new simulation' "
-                "expander to populate the time-saving figures."
-            ),
-        )
-    m5.metric(
         "⏭ Calls bypassed",
         energy.get("smart_bypassed_calls", "—"),
         f"of {energy.get('num_calls', '—')} calls",
