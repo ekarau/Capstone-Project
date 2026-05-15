@@ -577,6 +577,52 @@ def render_timeline_tab() -> None:
     )
     st.line_chart(energy_df, use_container_width=True)
 
+    # ─── Call-level confusion matrix ─────────────────────────────────
+    st.markdown("### How the bypass decisions break down")
+    st.caption(
+        "Call-level 2×2 matrix of the smart policy against the optimal-policy "
+        "ground truth across all simulated hall calls. Each row is what the "
+        "cabin actually allowed; each column is what the policy did."
+    )
+    outcome_counts = df["outcome"].value_counts()
+    tp = int(outcome_counts.get("TP", 0))
+    tn = int(outcome_counts.get("TN", 0))
+    fp = int(outcome_counts.get("FP", 0))
+    fn = int(outcome_counts.get("FN", 0))
+    total = tp + tn + fp + fn
+    service_rate = (tp + tn) / total if total else 0.0
+    cm_df = pd.DataFrame(
+        {
+            "Predicted: ACCEPT": [
+                f"✅ TN = {tn}",
+                f"❌ FN = {fn}",
+            ],
+            "Predicted: BYPASS": [
+                f"⚠ FP = {fp}",
+                f"✅ TP = {tp}",
+            ],
+        },
+        index=["GT: should ACCEPT", "GT: should BYPASS"],
+    )
+    st.table(cm_df)
+    cm_m1, cm_m2, cm_m3 = st.columns(3)
+    cm_m1.metric(
+        "Service rate",
+        f"{service_rate * 100:.1f}%",
+        f"{tp + tn} of {total} calls",
+        help="Share of calls where the smart policy made the right ACCEPT / BYPASS decision.",
+    )
+    cm_m2.metric(
+        "Wrongly skipped (FP)",
+        fp,
+        help="Cabin had room, but smart bypassed → passenger has to wait for the next cabin.",
+    )
+    cm_m3.metric(
+        "Wasted stops (FN)",
+        fn,
+        help="Cabin was full, but smart still stopped → door cycle wasted on a useless stop.",
+    )
+
     # ─── Outcome distribution by floor ───────────────────────────────
     st.markdown("### Outcomes by call origin floor")
     st.caption(
