@@ -181,8 +181,26 @@ python -m scripts.prepare_dataset --raw data/raw --out data/unified
 python -m src.detection.train --data data/unified/data.yaml --preset balanced
 ```
 
-Pretrained `best.pt` and `best_head.pt` (~22 MB each) are distributed
-on request — contact the authors.
+### Pretrained weights
+
+Download the two trained checkpoints (~22 MB each) from the
+[v0.2.0 release page](https://github.com/ekarau/Capstone-Project/releases/tag/v0.2.0)
+and place them under `models/weights/`:
+
+| File | Role | Target path |
+|---|---|---|
+| `best.pt` | three-class object detector (stroller, luggage, box) | `models/weights/best.pt` |
+| `best_head.pt` | head detector (person count) | `models/weights/best_head.pt` |
+
+Or download them programmatically:
+
+```bash
+mkdir -p models/weights
+curl -L -o models/weights/best.pt \
+  https://github.com/ekarau/Capstone-Project/releases/download/v0.2.0/best.pt
+curl -L -o models/weights/best_head.pt \
+  https://github.com/ekarau/Capstone-Project/releases/download/v0.2.0/best_head.pt
+```
 
 ### Reproducing the energy simulation
 
