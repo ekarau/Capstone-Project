@@ -40,6 +40,7 @@ from src.perception.occupancy import ClassFootprintOccupancy
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_WEIGHTS = ROOT / "models" / "weights" / "best.pt"
+DEFAULT_HEAD_WEIGHTS = ROOT / "models" / "weights" / "best_head.pt"
 SAMPLE_DIR = ROOT / "data" / "unified" / "test" / "images"
 
 # Per-class average footprint (m²).
@@ -99,18 +100,34 @@ def run_analysis(
     max_weight_kg: float,
     weight_threshold: float,
     area_threshold: float,
+    head_model=None,
+    head_conf_threshold: float = 0.25,
 ) -> AnalysisResult:
-    """Detect, estimate occupancy, decide accept / bypass."""
+    """Detect, estimate occupancy, decide accept / bypass.
+
+    When ``head_model`` is provided the pipeline runs in **3-class + head**
+    mode, mirroring ``scripts/run_simulation.py``:
+
+      * person counts come from the dedicated head detector
+      * stroller / luggage / box come from the object detector
+      * any ``person`` predictions from the object detector are
+        discarded to avoid double-counting
+    """
 
     # Always run inference so we can visualize, even when weight already
     # triggers bypass — useful for the operator to see what's in the cabin.
     result = model.predict(image, conf=conf_threshold, verbose=False)[0]
+    use_head_model = head_model is not None
 
     detections: list[dict] = []
     if result.boxes is not None:
         for box in result.boxes:
             cls_id = int(box.cls.item())
             cls_name = result.names[cls_id]
+            # In 3-class + head mode, drop the object detector's person
+            # predictions; head_model is the canonical source for person count.
+            if use_head_model and cls_name == "person":
+                continue
             x1, y1, x2, y2 = box.xyxy[0].tolist()
             detections.append(
                 {
@@ -120,13 +137,33 @@ def run_analysis(
                 }
             )
 
-    # Aggregate per-class counts, then delegate the footprint→ratio
+    # Aggregate per-class counts. Then delegate the footprint→ratio
     # computation to the thesis §3.5 estimator. Classes with no
     # configured footprint are filtered out by ``ClassFootprintOccupancy``.
     raw_counts: dict[str, int] = {}
     for det in detections:
         cls = det["class"]
         raw_counts[cls] = raw_counts.get(cls, 0) + 1
+
+    # 3-class + head mode: head detector supplies the person count and we
+    # expose the per-head bboxes alongside the object-detector bboxes so the
+    # UI can show counts and draw them.
+    head_result = None
+    if use_head_model:
+        head_result = head_model.predict(image, conf=head_conf_threshold, verbose=False)[0]
+        head_count = 0
+        if head_result.boxes is not None:
+            head_count = len(head_result.boxes)
+            for box in head_result.boxes:
+                x1, y1, x2, y2 = box.xyxy[0].tolist()
+                detections.append(
+                    {
+                        "class": "person",
+                        "conf": float(box.conf.item()),
+                        "bbox": (int(x1), int(y1), int(x2), int(y2)),
+                    }
+                )
+        raw_counts["person"] = head_count
 
     occupancy = ClassFootprintOccupancy(footprints_m2=class_areas, cabin_m2=cabin_m2).compute(
         raw_counts
@@ -157,7 +194,25 @@ def run_analysis(
             f"occupancy {occupancy_ratio * 100:.1f}%."
         )
 
-    annotated = result.plot()[..., ::-1]  # BGR → RGB
+    # Object detector annotations first, then overlay head boxes on top
+    # so the operator sees every counted instance in a single frame.
+    annotated_bgr = result.plot()  # BGR
+    if use_head_model and head_result is not None and head_result.boxes is not None:
+        import cv2  # local import keeps the demo importable without cv2 at top
+
+        for box in head_result.boxes:
+            x1, y1, x2, y2 = (int(v) for v in box.xyxy[0].tolist())
+            cv2.rectangle(annotated_bgr, (x1, y1), (x2, y2), (0, 0, 255), 2)
+            cv2.putText(
+                annotated_bgr,
+                f"person {float(box.conf.item()):.2f}",
+                (x1, max(0, y1 - 6)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0, 0, 255),
+                2,
+            )
+    annotated = annotated_bgr[..., ::-1]  # BGR → RGB
 
     return AnalysisResult(
         annotated_image=annotated,
@@ -299,7 +354,7 @@ def _run_simulation(
 
 
 def _render_image_gallery(run_dir: Path) -> None:
-    """Side-by-side gallery: original | 4-class annotated | head annotated."""
+    """Side-by-side gallery: original | object detector annotated | head detector annotated."""
     pred_dir = run_dir / "predictions"
     head_pred_dir = run_dir / "predictions_head"
     if not pred_dir.is_dir() or not SIM_IMAGES_DIR.is_dir():
@@ -350,7 +405,7 @@ def _render_image_gallery(run_dir: Path) -> None:
             cols[0].image(str(original), caption="Original", use_container_width=True)
         else:
             cols[0].info("Original image missing.")
-        cols[1].image(str(pred_path), caption="4-class detector", use_container_width=True)
+        cols[1].image(str(pred_path), caption="Object detector", use_container_width=True)
         if head_pred and head_pred.exists():
             cols[2].image(str(head_pred), caption="Head detector", use_container_width=True)
 
@@ -651,11 +706,11 @@ def render_batch_tab(cfg: dict) -> None:
                 0.40,
                 0.05,
                 help="Detection threshold for the head model only. "
-                "The four-class threshold comes from the sidebar.",
+                "The object detector threshold comes from the sidebar.",
             )
         with col_b:
             num_calls = st.number_input("Synthetic hall calls", 100, 5000, value=1000, step=100)
-            use_head = st.checkbox("Use head detector (hybrid mode)", value=True)
+            use_head = st.checkbox("Use head detector (3-class + head mode)", value=True)
 
         # Rated capacity is derived from the sidebar Rated load (75 kg / passenger).
         rated_capacity = max(1, round(cfg["max_weight"] / 75.0))
@@ -664,15 +719,15 @@ def render_batch_tab(cfg: dict) -> None:
             f"**{rated_capacity} persons**  ·  "
             f"Cabin: **{cfg['cabin_m2']:.2f} m²**  ·  "
             f"τ_A=**{cfg['area_threshold']:.2f}**  ·  "
-            f"4-class conf=**{cfg['conf_threshold']:.2f}**"
+            f"Object det. conf=**{cfg['conf_threshold']:.2f}**"
         )
 
-        weights_path = Path(cfg["weights_path"])
-        head_path = ROOT / "models" / "weights" / "best_head.pt"
+        weights_path = DEFAULT_WEIGHTS
+        head_path = DEFAULT_HEAD_WEIGHTS
         if not weights_path.exists():
-            st.error(f"Four-class weights not found at {weights_path}.")
+            st.error(f"Object detector weights not found at {weights_path}.")
         elif use_head and not head_path.exists():
-            st.error(f"Head weights not found at {head_path}.")
+            st.error(f"Head detector weights not found at {head_path}.")
         elif st.button("▶ Run simulation now", type="primary"):
             with st.spinner(f"Running simulation → {run_name} (this can take a minute) …"):
                 ok, output = _run_simulation(
@@ -887,7 +942,10 @@ def render_sidebar() -> dict:
         }
 
         st.header("Model")
-        weights_path = st.text_input("Weights path", value=str(DEFAULT_WEIGHTS))
+        st.caption(
+            f"Object detector: `{DEFAULT_WEIGHTS.relative_to(ROOT)}`  \n"
+            f"Head detector:   `{DEFAULT_HEAD_WEIGHTS.relative_to(ROOT)}`"
+        )
 
     return {
         "width_m": width_m,
@@ -899,7 +957,6 @@ def render_sidebar() -> dict:
         "weight_threshold": weight_threshold,
         "area_threshold": area_threshold,
         "class_areas": class_areas,
-        "weights_path": weights_path,
     }
 
 
@@ -916,7 +973,6 @@ def render_single_frame_tab(cfg: dict) -> None:
     weight_threshold = cfg["weight_threshold"]
     area_threshold = cfg["area_threshold"]
     class_areas = cfg["class_areas"]
-    weights_path = cfg["weights_path"]
 
     # ─── Main: input + output ─────────────────────────────────────────
     col_input, col_output = st.columns([1, 1])
@@ -951,11 +1007,16 @@ def render_single_frame_tab(cfg: dict) -> None:
             st.info("Upload an image or pick a sample on the left.")
             return
 
-        if not Path(weights_path).exists():
-            st.error(f"Weights not found at: `{weights_path}`")
+        missing: list[str] = []
+        if not DEFAULT_WEIGHTS.exists():
+            missing.append(str(DEFAULT_WEIGHTS))
+        if not DEFAULT_HEAD_WEIGHTS.exists():
+            missing.append(str(DEFAULT_HEAD_WEIGHTS))
+        if missing:
+            st.error("Required weights not found:\n- " + "\n- ".join(missing))
             st.caption(
-                "Train a model first (see notebooks/02_train.ipynb) or "
-                "place an existing checkpoint at the path above."
+                "Place the trained checkpoints under ``models/weights/`` "
+                "(see notebooks/02_train.ipynb and notebooks/05_head_model_training.ipynb)."
             )
             return
 
@@ -963,8 +1024,9 @@ def render_single_frame_tab(cfg: dict) -> None:
             st.caption("Click the button above to run the detector.")
             return
 
-        with st.spinner("Running detector…"):
-            model = load_model(weights_path)
+        with st.spinner("Running detectors…"):
+            model = load_model(str(DEFAULT_WEIGHTS))
+            head_model = load_model(str(DEFAULT_HEAD_WEIGHTS))
             result = run_analysis(
                 image=img_array,
                 model=model,
@@ -975,11 +1037,12 @@ def render_single_frame_tab(cfg: dict) -> None:
                 max_weight_kg=max_weight,
                 weight_threshold=weight_threshold,
                 area_threshold=area_threshold,
+                head_model=head_model,
             )
 
         st.image(
             result.annotated_image,
-            caption="YOLOv8 detections",
+            caption="3-class + head detections: object detector (default colours) + head detector (red)",
             use_container_width=True,
         )
 

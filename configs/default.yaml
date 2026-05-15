@@ -37,9 +37,10 @@ thresholds:
 # ──────────────────────────────────────────────────────────────
 #  Detection classes — must match thesis §3.10
 # ──────────────────────────────────────────────────────────────
-# NOTE: `person` is detected by the dedicated head model (best_head.pt),
-# not by this four-class detector. The object detector below covers only
-# the three non-person classes.
+# The three-class object detector covers the non-human cabin classes.
+# `person` is supplied at runtime by the dedicated head detector
+# (best_head.pt); the two detector outputs are concatenated to form
+# the four operational output classes (person, stroller, luggage, box).
 classes:
   - stroller
   - luggage

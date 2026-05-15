@@ -56,21 +56,21 @@ Both commands evaluate three policies (always-accept / weight-only /
 smart) on the same 1 000-call stream:
 
 ```bash
-# 4-class single-model
+# Object detector alone (stroller / luggage / box only)
 python -m scripts.run_simulation \
     --images data/sim/images \
     --ground-truth data/sim/ground_truth.csv \
-    --weights models/weights/best_v2.pt \
+    --weights models/weights/best.pt \
     --rated-capacity 8 \
     --conf-threshold 0.40 \
     --num-calls 1000 \
-    --output results/simulation/baseline_4cls_67
+    --output results/simulation/baseline_67
 
-# Hybrid (4-class + head)
+# 3-class + head detector (object detector + head detector for person)
 python -m scripts.run_simulation \
     --images data/sim/images \
     --ground-truth data/sim/ground_truth.csv \
-    --weights models/weights/best_v2.pt \
+    --weights models/weights/best.pt \
     --head-weights models/weights/best_head.pt \
     --rated-capacity 8 \
     --conf-threshold 0.40 \
@@ -78,6 +78,13 @@ python -m scripts.run_simulation \
     --num-calls 1000 \
     --output results/simulation/hybrid_67
 ```
+
+The canonical thesis results under `results/simulation/baseline_4cls_67/`
+and `results/simulation/hybrid_67/` were produced with an earlier
+four-class checkpoint (`best_v2.pt`) and are kept for historical
+reference. The commands above reflect the current `best.pt` checkpoint,
+which is the three-class object detector (`person` is handled
+exclusively by `best_head.pt` in 3-class + head mode).
 
 The script writes `confusion_matrix.png`, `per_image_decisions.csv`,
 `per_class_detection.csv`, `energy_savings.csv`, `call_log.csv` and

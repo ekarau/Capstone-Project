@@ -1,6 +1,6 @@
 # Smart Elevator CV — Streamlit Demo
 
-Interactive web UI for the trained four-class detector and the EN-81-20-grounded area model. Designed for thesis demonstrations and rapid scenario testing — change cabin geometry, current load, or detection thresholds in the sidebar and watch the bypass decision update on a single uploaded frame.
+Interactive web UI for the **3-class + head** detector pipeline (object detector for stroller / luggage / box + head detector for person) and the EN-81-20-grounded area model. Designed for thesis demonstrations and rapid scenario testing — change cabin geometry, current load, or detection thresholds in the sidebar and watch the bypass decision update on a single uploaded frame.
 
 ## What you'll see
 
@@ -23,7 +23,7 @@ Streamlit opens the demo at `http://localhost:8501`.
 
 ## Requirements
 
-- A trained checkpoint at `models/weights/best.pt` (the v0.2.0 release ships separately — contact the authors).
+- Trained checkpoints at `models/weights/best.pt` (object detector) and `models/weights/best_head.pt` (head detector). The v0.2.0 release ships these separately — contact the authors.
 - Python 3.10 – 3.12.
 - All base dependencies plus `streamlit>=1.36`. Both are covered by the `demo` extra in `pyproject.toml`.
 
@@ -38,12 +38,11 @@ Streamlit opens the demo at `http://localhost:8501`.
 | Weight bypass τ_W       | Bypass when `W ≥ τ_W · W_rated`                          | 0.80 |
 | Area bypass τ_A         | Bypass when `ρ ≥ τ_A`                                    | 0.90 |
 | Per-class footprints    | Override the per-class defaults                          | see app |
-| Weights path            | Where to find `best.pt`                                  | `models/weights/best.pt` |
 
 ## Notes for the jury demo
 
 - **Refresh the sample dropdown** by uploading a custom CCTV image; the test set under `data/unified/test/images/` is also auto-discovered if present.
-- **The model loads once** (cached) — only re-instantiates on a different weights path.
+- **Models load once** (cached) — both the object detector and the head detector are kept in memory between reruns.
 - **Stage-1 weight gate fires before vision.** When the weight slider exceeds `τ_W`, the detector still runs (so you can show the cabin contents) but the decision is fixed regardless of occupancy.
 - **No persistent storage.** Closing the tab discards uploaded frames; nothing is logged or sent off-device.
 
