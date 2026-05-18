@@ -1,15 +1,16 @@
 # Smart Elevator CV — Streamlit Demo
 
-Interactive web UI for the **3-class + head** detector pipeline (object detector for stroller / luggage / box + head detector for person) and the EN-81-20-grounded area model. Designed for thesis demonstrations and rapid scenario testing — change cabin geometry, current load, or detection thresholds in the sidebar and watch the bypass decision update on a single uploaded frame.
+Interactive web UI for the **3-class + head** detector pipeline (object detector for stroller / luggage / box + head detector for person) and the EN-81-20-grounded area model. Designed for thesis demonstrations and reproducible scenario sweeps — change cabin geometry, rated load, or detection thresholds in the sidebar and re-run the curated 68-image simulation; both views (Batch Simulation and Call Timeline) refresh against the new settings.
 
 ## What you'll see
 
-- **Sidebar.** Cabin width / depth, rated load, current weight, YOLO confidence, weight and area bypass thresholds, per-class footprint overrides.
-- **Main panel.** Upload an image (or pick a bundled test sample), click *Analyze*, and read off
-  - the annotated frame with bounding boxes,
-  - the ACCEPT / BYPASS (area) / BYPASS (weight) decision badge with a one-line justification,
-  - per-class detection counts and their cumulative footprint,
-  - the floor-occupancy and weight gauges.
+- **Sidebar.** Cabin width / depth, rated load, YOLO confidence, weight and area bypass thresholds.
+- **Batch Simulation tab.** Run the curated ground-truth set in `data/sim/` through the trained detectors, then inspect
+  - call-level bypass-decision accuracy (TP / TN / FP / FN, service rate),
+  - the outcome breakdown with energy attribution (mirrors Report Table 4.6),
+  - object-level counting metrics (recall / precision / F1 per class),
+  - cumulative energy savings curves for the three policies.
+- **Call Timeline tab.** Replay individual hall calls from any saved run, filtered by outcome class (TP / TN / FP / FN) to inspect failure cases image by image.
 
 ## Quick start
 
@@ -29,22 +30,19 @@ Streamlit opens the demo at `http://localhost:8501`.
 
 ## Configuration cheatsheet
 
-| Sidebar field           | Effect                                                   | Default |
-|-------------------------|----------------------------------------------------------|:---:|
-| Width / Depth (m)       | Recomputes cabin floor area `A_cabin = W × D`            | 1.4 / 1.6 |
-| Rated load (kg)         | Denominator of the weight-bypass ratio                   | 630 |
-| Current cabin weight    | Numerator of the weight-bypass ratio                     | 0 |
-| YOLO confidence         | Detection threshold; lower = more recall, more FPs       | 0.40 |
-| Weight bypass τ_W       | Bypass when `W ≥ τ_W · W_rated`                          | 0.80 |
-| Area bypass τ_A         | Bypass when `ρ ≥ τ_A`                                    | 0.90 |
-| Per-class footprints    | Override the per-class defaults                          | see app |
+| Sidebar field           | Effect                                                                          | Default |
+|-------------------------|---------------------------------------------------------------------------------|:---:|
+| Width / Depth (m)       | Recomputes cabin floor area `A_cabin = W × D`                                   | 1.4 / 1.6 |
+| Rated load (kg)         | Derives rated capacity (≈ kg / 75) and feeds it to the simulation subprocess    | 630 |
+| YOLO confidence         | Detection threshold for the object detector; lower = more recall, more FPs     | 0.40 |
+| Weight bypass τ_W       | Bypass when `W ≥ τ_W · W_rated`                                                 | 0.80 |
+| Area bypass τ_A         | Bypass when `ρ ≥ τ_A`                                                           | 0.90 |
 
 ## Notes for the jury demo
 
-- **Refresh the sample dropdown** by uploading a custom CCTV image; the test set under `data/unified/test/images/` is also auto-discovered if present.
-- **Models load once** (cached) — both the object detector and the head detector are kept in memory between reruns.
-- **Stage-1 weight gate fires before vision.** When the weight slider exceeds `τ_W`, the detector still runs (so you can show the cabin contents) but the decision is fixed regardless of occupancy.
-- **No persistent storage.** Closing the tab discards uploaded frames; nothing is logged or sent off-device.
+- **Models load lazily inside the simulation subprocess** — the first `Run simulation now` therefore takes a little longer while the YOLOv8 weights are mapped into the worker process.
+- **Stage-1 weight gate fires before vision.** The simulator evaluates the load-cell gate first and only invokes the detectors on calls that pass it, mirroring `scripts/run_simulation.py`.
+- **No persistent storage of CCTV frames.** Runs live under `results/simulation/<run_name>/`; closing the tab does not discard them, so you can re-open the dashboard and reselect any earlier run from the dropdown.
 
 ## Reference
 

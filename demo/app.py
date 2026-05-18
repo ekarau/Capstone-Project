@@ -4,35 +4,25 @@ Run with::
 
     streamlit run demo/app.py
 
-Inputs (sidebar):
-    cabin width / depth / rated load (kg)
-    current cabin weight (kg)
-    YOLO confidence threshold
-    weight and area bypass thresholds
-    class-specific footprint overrides
-    weights file path
+This dashboard runs the curated ground-truth set in ``data/sim/`` through
+the trained detectors and exposes two views:
 
-Pipeline:
-    1. Stage-1 weight gate.
-    2. YOLOv8 inference on the uploaded frame.
-    3. Class-based area estimator with industry-standard footprints.
-    4. Stage-2 area gate.
-    5. Render annotated frame, per-class breakdown, gauges, and the
-       final ACCEPT / BYPASS decision.
+    * **Batch Simulation** — re-run the simulation, then inspect
+      bypass-decision accuracy, object-level counting metrics and
+      cumulative energy savings.
+    * **Call Timeline** — replay individual hall calls from any saved
+      run, filtered by TP / TN / FP / FN outcome.
 
-The demo loads weights once via ``@st.cache_resource`` so re-analysis
-on the same model is fast.
+Sidebar controls — cabin geometry, rated load, YOLO confidence and the
+two decision thresholds — drive both tabs and the next
+``Run simulation now`` honours them.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from pathlib import Path
 
-import numpy as np
 import streamlit as st
-from PIL import Image
-from src.perception.occupancy import ClassFootprintOccupancy
 
 # ──────────────────────────────────────────────────────────────────────
 #  Configuration
@@ -41,193 +31,6 @@ from src.perception.occupancy import ClassFootprintOccupancy
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_WEIGHTS = ROOT / "models" / "weights" / "best.pt"
 DEFAULT_HEAD_WEIGHTS = ROOT / "models" / "weights" / "best_head.pt"
-SAMPLE_DIR = ROOT / "data" / "unified" / "test" / "images"
-
-# Per-class average footprint (m²).
-DEFAULT_AREAS_M2: dict[str, float] = {
-    "person": 0.20,
-    "stroller": 0.45,
-    "luggage": 0.20,
-    "box": 0.20,
-}
-
-DECISION_LABELS = {
-    "ACCEPT": ("✅", "ACCEPT", "success"),
-    "BYPASS_AREA": ("⚠", "BYPASS (area)", "warning"),
-    "BYPASS_WEIGHT": ("🚫", "BYPASS (weight)", "error"),
-}
-
-
-@dataclass
-class AnalysisResult:
-    """Everything the UI needs after one inference run."""
-
-    annotated_image: np.ndarray
-    counts: dict[str, int]
-    breakdown_m2: dict[str, float]
-    occupied_m2: float
-    cabin_m2: float
-    occupancy_ratio: float
-    weight_kg: float
-    max_weight_kg: float
-    weight_ratio: float
-    decision: str
-    decision_reason: str
-    detections: list[dict] = field(default_factory=list)
-
-
-# ──────────────────────────────────────────────────────────────────────
-#  Inference + decision
-# ──────────────────────────────────────────────────────────────────────
-
-
-@st.cache_resource(show_spinner="Loading YOLOv8 weights…")
-def load_model(weights_path: str):
-    """Load YOLOv8 model once and cache across reruns."""
-    from ultralytics import YOLO
-
-    return YOLO(weights_path)
-
-
-def run_analysis(
-    image: np.ndarray,
-    model,
-    *,
-    cabin_m2: float,
-    class_areas: dict[str, float],
-    conf_threshold: float,
-    weight_kg: float,
-    max_weight_kg: float,
-    weight_threshold: float,
-    area_threshold: float,
-    head_model=None,
-    head_conf_threshold: float = 0.25,
-) -> AnalysisResult:
-    """Detect, estimate occupancy, decide accept / bypass.
-
-    When ``head_model`` is provided the pipeline runs in **3-class + head**
-    mode, mirroring ``scripts/run_simulation.py``:
-
-      * person counts come from the dedicated head detector
-      * stroller / luggage / box come from the object detector
-      * any ``person`` predictions from the object detector are
-        discarded to avoid double-counting
-    """
-
-    # Always run inference so we can visualize, even when weight already
-    # triggers bypass — useful for the operator to see what's in the cabin.
-    result = model.predict(image, conf=conf_threshold, verbose=False)[0]
-    use_head_model = head_model is not None
-
-    detections: list[dict] = []
-    if result.boxes is not None:
-        for box in result.boxes:
-            cls_id = int(box.cls.item())
-            cls_name = result.names[cls_id]
-            # In 3-class + head mode, drop the object detector's person
-            # predictions; head_model is the canonical source for person count.
-            if use_head_model and cls_name == "person":
-                continue
-            x1, y1, x2, y2 = box.xyxy[0].tolist()
-            detections.append(
-                {
-                    "class": cls_name,
-                    "conf": float(box.conf.item()),
-                    "bbox": (int(x1), int(y1), int(x2), int(y2)),
-                }
-            )
-
-    # Aggregate per-class counts. Then delegate the footprint→ratio
-    # computation to the thesis §3.5 estimator. Classes with no
-    # configured footprint are filtered out by ``ClassFootprintOccupancy``.
-    raw_counts: dict[str, int] = {}
-    for det in detections:
-        cls = det["class"]
-        raw_counts[cls] = raw_counts.get(cls, 0) + 1
-
-    # 3-class + head mode: head detector supplies the person count and we
-    # expose the per-head bboxes alongside the object-detector bboxes so the
-    # UI can show counts and draw them.
-    head_result = None
-    if use_head_model:
-        head_result = head_model.predict(image, conf=head_conf_threshold, verbose=False)[0]
-        head_count = 0
-        if head_result.boxes is not None:
-            head_count = len(head_result.boxes)
-            for box in head_result.boxes:
-                x1, y1, x2, y2 = box.xyxy[0].tolist()
-                detections.append(
-                    {
-                        "class": "person",
-                        "conf": float(box.conf.item()),
-                        "bbox": (int(x1), int(y1), int(x2), int(y2)),
-                    }
-                )
-        raw_counts["person"] = head_count
-
-    occupancy = ClassFootprintOccupancy(footprints_m2=class_areas, cabin_m2=cabin_m2).compute(
-        raw_counts
-    )
-    counts: dict[str, int] = dict(occupancy.counts)
-    breakdown: dict[str, float] = dict(occupancy.breakdown_m2)
-    occupied = occupancy.occupied_m2
-    occupancy_ratio = occupancy.ratio
-    weight_ratio = weight_kg / max_weight_kg if max_weight_kg > 0 else 0.0
-
-    # PDF Algorithm 1 — weight gate first, then area gate.
-    if weight_ratio >= weight_threshold:
-        decision = "BYPASS_WEIGHT"
-        reason = (
-            f"Cabin load {weight_kg:.0f} kg ≥ {weight_threshold * 100:.0f}% "
-            f"of rated {max_weight_kg:.0f} kg."
-        )
-    elif occupancy_ratio >= area_threshold:
-        decision = "BYPASS_AREA"
-        reason = (
-            f"Estimated floor occupancy {occupancy_ratio * 100:.1f}% "
-            f"≥ {area_threshold * 100:.0f}% threshold."
-        )
-    else:
-        decision = "ACCEPT"
-        reason = (
-            f"Both stages clear — load {weight_ratio * 100:.0f}%, "
-            f"occupancy {occupancy_ratio * 100:.1f}%."
-        )
-
-    # Object detector annotations first, then overlay head boxes on top
-    # so the operator sees every counted instance in a single frame.
-    annotated_bgr = result.plot()  # BGR
-    if use_head_model and head_result is not None and head_result.boxes is not None:
-        import cv2  # local import keeps the demo importable without cv2 at top
-
-        for box in head_result.boxes:
-            x1, y1, x2, y2 = (int(v) for v in box.xyxy[0].tolist())
-            cv2.rectangle(annotated_bgr, (x1, y1), (x2, y2), (0, 0, 255), 2)
-            cv2.putText(
-                annotated_bgr,
-                f"person {float(box.conf.item()):.2f}",
-                (x1, max(0, y1 - 6)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (0, 0, 255),
-                2,
-            )
-    annotated = annotated_bgr[..., ::-1]  # BGR → RGB
-
-    return AnalysisResult(
-        annotated_image=annotated,
-        counts=counts,
-        breakdown_m2=breakdown,
-        occupied_m2=occupied,
-        cabin_m2=cabin_m2,
-        occupancy_ratio=occupancy_ratio,
-        weight_kg=weight_kg,
-        max_weight_kg=max_weight_kg,
-        weight_ratio=weight_ratio,
-        decision=decision,
-        decision_reason=reason,
-        detections=detections,
-    )
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -306,6 +109,7 @@ def _run_simulation(
     num_calls: int,
     cabin_m2: float,
     area_threshold: float,
+    seed: int = 42,
 ) -> tuple[bool, str]:
     """Invoke scripts.run_simulation as a subprocess. Returns (ok, stdout)."""
     import subprocess
@@ -333,6 +137,8 @@ def _run_simulation(
         f"{cabin_m2:.4f}",
         "--area-threshold",
         f"{area_threshold:.2f}",
+        "--seed",
+        str(seed),
         "--output",
         str(SIM_RESULTS_ROOT / run_name),
     ]
@@ -623,19 +429,33 @@ def render_timeline_tab() -> None:
         help="Cabin was full, but smart still stopped → door cycle wasted on a useless stop.",
     )
 
-    # ─── Outcome distribution by floor ───────────────────────────────
-    st.markdown("### Outcomes by call origin floor")
+    # ─── Outcome breakdown with energy attribution (Report Table 4.6) ──
+    # Per-floor distribution intentionally removed: the simulator samples
+    # cabins uniformly and the algorithm is floor-agnostic, so any
+    # per-floor split is sample-size noise rather than an analytical
+    # signal. The aggregate outcome × energy view below replaces it and
+    # mirrors Table 4.6 of the thesis.
+    st.markdown("### Outcome breakdown")
     st.caption(
-        "How calls from each floor were handled. TP = correct bypass, "
-        "TN = correct accept, FP = wrong bypass (passenger waited), "
-        "FN = wrong accept (wasted stop)."
+        "Each misclassification has a distinct operational consequence "
+        "beyond the raw energy figure. The service-rate cost is paid "
+        "entirely in wasted stops (FN) rather than skipped passengers "
+        "(FP); a wasted stop costs one door cycle, whereas a skipped "
+        "passenger costs trust."
     )
-    pivot = df.groupby(["origin_floor", "outcome"]).size().unstack(fill_value=0)
-    for col in ("TP", "TN", "FP", "FN"):
-        if col not in pivot.columns:
-            pivot[col] = 0
-    pivot = pivot[["TP", "TN", "FP", "FN"]]
-    st.bar_chart(pivot, use_container_width=True)
+    tp_kj = df.loc[df["outcome"] == "TP", "stop_overhead_kj"].sum()
+    fn_kj = df.loc[df["outcome"] == "FN", "stop_overhead_kj"].sum()
+    st.markdown(
+        f"""
+| Outcome | Count | Stop-overhead energy | Operational meaning |
+|---|:---:|---|---|
+| True positive (TP)  | {tp} | {tp_kj:.1f} kJ saved | Saturated cabin correctly bypassed |
+| True negative (TN)  | {tn} | 0 | Non-saturated cabin correctly accepted |
+| False positive (FP) | {fp} | 0 | No incoming passenger wrongly skipped |
+| False negative (FN) | {fn} | {fn_kj:.1f} kJ foregone | Wasted stop at a saturated cabin |
+| **Total** | **{total}** | **Service rate = {service_rate * 100:.1f} %** | — |
+"""
+    )
 
     # ─── Call-log table (filterable) ─────────────────────────────────
     st.markdown("### Call log")
@@ -757,6 +577,18 @@ def render_batch_tab(cfg: dict) -> None:
         with col_b:
             num_calls = st.number_input("Synthetic hall calls", 100, 5000, value=1000, step=100)
             use_head = st.checkbox("Use head detector (3-class + head mode)", value=True)
+            seed_mode = st.radio(
+                "Call-stream seed",
+                ["Random 🎲", "Fixed (=42)"],
+                horizontal=True,
+                index=0,
+                help=(
+                    "Random — generate a fresh seed on every click, so the "
+                    "1,000-call stream is different each run.  "
+                    "Fixed — reuse seed = 42, which reproduces the thesis "
+                    "numbers exactly."
+                ),
+            )
 
         # Rated capacity is derived from the sidebar Rated load (75 kg / passenger).
         rated_capacity = max(1, round(cfg["max_weight"] / 75.0))
@@ -775,7 +607,15 @@ def render_batch_tab(cfg: dict) -> None:
         elif use_head and not head_path.exists():
             st.error(f"Head detector weights not found at {head_path}.")
         elif st.button("▶ Run simulation now", type="primary"):
-            with st.spinner(f"Running simulation → {run_name} (this can take a minute) …"):
+            # Resolve the seed at click time so a single random click produces
+            # one call stream (further reruns of this widget alone don't
+            # regenerate it; only a fresh click does).
+            import random as _random
+
+            sim_seed = _random.randint(0, 2_000_000_000) if seed_mode.startswith("Random") else 42
+            with st.spinner(
+                f"Running simulation → {run_name} (seed={sim_seed}) (this can take a minute) …"
+            ):
                 ok, output = _run_simulation(
                     run_name=run_name,
                     weights=weights_path,
@@ -786,9 +626,13 @@ def render_batch_tab(cfg: dict) -> None:
                     num_calls=num_calls,
                     cabin_m2=cfg["cabin_m2"],
                     area_threshold=cfg["area_threshold"],
+                    seed=sim_seed,
                 )
             if ok:
-                st.success(f"Simulation finished → results/simulation/{run_name}/")
+                st.success(
+                    f"Simulation finished → results/simulation/{run_name}/  "
+                    f"(seed={sim_seed})"
+                )
             else:
                 st.error("Simulation failed. See the captured output below.")
             with st.expander("subprocess output", expanded=not ok):
@@ -815,24 +659,46 @@ def render_batch_tab(cfg: dict) -> None:
     energy = _parse_energy_csv(run_dir / "energy_savings.csv")
     md_rep = run_dir / "report.md"
 
-    # Two accuracies + energy.
+    # Decision accuracy + object-level counting metrics + energy.
     bypass_acc = "—"
-    counting_acc = "—"
+    counting_f1 = "—"
+    counting_gt = counting_pred = counting_tp = counting_fn = counting_fp = "—"
+    counting_recall = counting_precision = "—"
     if md_rep.exists():
         text = md_rep.read_text(encoding="utf-8")
-        # Cheap parse: grab the bolded numbers next to the labels.
         import re
 
         m1 = re.search(r"Bypass accuracy[^\d]*([\d.]+)", text)
-        m2 = re.search(r"Counting accuracy[^\d]*([\d.]+)", text)
         if m1:
             bypass_acc = f"{float(m1.group(1)) * 100:.1f}%"
-        if m2:
-            counting_acc = f"{float(m2.group(1)) * 100:.1f}%"
+
+        # Parse the OVERALL row of the object-level counting table.
+        # Row format: "| **OVERALL** | **440** | **434** | **391** | **49** | **43** | **0.889** | **0.901** | **0.895** |"
+        ov = re.search(
+            r"\|\s*\*?\*?OVERALL\*?\*?\s*\|"
+            r"\s*\*?\*?(\d+)\*?\*?\s*\|"  # GT
+            r"\s*\*?\*?(\d+)\*?\*?\s*\|"  # Pred
+            r"\s*\*?\*?(\d+)\*?\*?\s*\|"  # TP
+            r"\s*\*?\*?(\d+)\*?\*?\s*\|"  # FN
+            r"\s*\*?\*?(\d+)\*?\*?\s*\|"  # FP
+            r"\s*\*?\*?([\d.]+)\*?\*?\s*\|"  # Recall
+            r"\s*\*?\*?([\d.]+)\*?\*?\s*\|"  # Precision
+            r"\s*\*?\*?([\d.]+)\*?\*?\s*\|",  # F1
+            text,
+        )
+        if ov:
+            counting_gt = int(ov.group(1))
+            counting_pred = int(ov.group(2))
+            counting_tp = int(ov.group(3))
+            counting_fn = int(ov.group(4))
+            counting_fp = int(ov.group(5))
+            counting_recall = float(ov.group(6))
+            counting_precision = float(ov.group(7))
+            counting_f1 = float(ov.group(8))
 
     st.markdown("### Headline metrics")
     st.caption(
-        "Detection and decision quality on the 67-image curated set. "
+        "Detection and decision quality on the 68-image curated set. "
         "Energy- and stop-time savings over the 1 000 synthetic hall "
         "calls are reported in the **Call Timeline** tab."
     )
@@ -844,14 +710,23 @@ def render_batch_tab(cfg: dict) -> None:
             "How often the elevator controller makes the right ACCEPT / BYPASS call on each image."
         ),
     )
+    counting_value = f"{counting_f1 * 100:.1f}%" if isinstance(counting_f1, float) else "—"
+    counting_delta = (
+        f"{counting_tp} of {counting_gt} objects correctly counted"
+        if isinstance(counting_tp, int)
+        else None
+    )
     m2.metric(
-        "🔢 Counting accuracy",
-        counting_acc,
+        "🔢 Counting F1 (object-level)",
+        counting_value,
+        counting_delta,
         help=(
-            "How often EVERY per-class count "
-            "(people, strollers, luggage, boxes) matches the ground truth "
-            "exactly. A stricter test than the decision accuracy: this "
-            "verifies the model is right for the right reasons."
+            "Per-object retrieval quality across all four classes. "
+            "Each ground-truth instance is one retrieval target, so TP = correctly counted, "
+            "FN = missed, FP = spurious detection. F1 = 2·precision·recall / (precision + recall). "
+            "This replaces the older strict image-level exact-match (which failed an entire image "
+            "on a single off-by-one count); the per-object view is the same metric reported "
+            "in Table 4.5a of the report."
         ),
     )
     m3.metric(
@@ -860,21 +735,32 @@ def render_batch_tab(cfg: dict) -> None:
         f"of {energy.get('num_calls', '—')} calls",
     )
 
-    with st.expander("What do these two accuracies mean?"):
+    # Per-object breakdown row
+    if isinstance(counting_tp, int):
+        st.caption(
+            f"**Counting breakdown** — Ground-truth objects: {counting_gt}  ·  "
+            f"Predicted: {counting_pred}  ·  ✅ TP {counting_tp}  ·  "
+            f"❌ FN {counting_fn} (missed)  ·  ⚠ FP {counting_fp} (spurious)  ·  "
+            f"Recall {counting_recall:.3f}  ·  Precision {counting_precision:.3f}"
+        )
+
+    with st.expander("What do these accuracies mean?"):
         st.markdown(
             "We report the system's correctness on **two independent levels**:\n\n"
             "1. **Decision accuracy** — *does the controller make the "
             "right call?* The cabin is either *full* or *not full*; the "
             "controller is correct whenever it agrees with the ground "
             "truth on this binary question.\n\n"
-            "2. **Counting accuracy** — *does the underlying detector "
-            "see exactly the right objects?* The image is counted as "
-            "correct only when the predicted person, stroller, luggage "
-            "and box counts ALL match the ground truth.\n\n"
-            "A high decision accuracy with a low counting accuracy means "
-            "the system often arrives at the right call via wrong counts "
-            "(*spurious correctness*). Reporting both prevents that "
-            "shortcut from inflating the headline number."
+            "2. **Counting F1 (object-level)** — *does the underlying detector "
+            "see the right number of objects?* Every ground-truth instance is treated as a "
+            "retrieval target: a correct count is a true positive, a missed instance is a "
+            "false negative, and a spurious detection is a false positive. F1 is the harmonic "
+            "mean of recall and precision over the whole 68-image set. This is a more "
+            "informative metric than the older strict image-level exact-match, which failed "
+            "an entire image on any one-instance deviation in any class.\n\n"
+            "A high decision accuracy with a low counting F1 means the system often "
+            "arrives at the right call via wrong counts (*spurious correctness*). "
+            "Reporting both prevents that shortcut from inflating the headline number."
         )
 
     # ─── Confusion matrix + tabular details ──────────────────────────
@@ -918,9 +804,9 @@ def render_batch_tab(cfg: dict) -> None:
 def render_sidebar() -> dict:
     """Render the global sidebar and return all configuration values.
 
-    These values drive **both** the Single Frame tab and the Batch
-    Simulation tab — change a slider once, both views (and the
-    subprocess that scripts.run_simulation spawns) honour it.
+    These values drive the Batch Simulation tab (and the subprocess that
+    ``scripts.run_simulation`` spawns) — change a slider once and the
+    next run honours it.
     """
     with st.sidebar:
         st.header("Cabin geometry")
@@ -931,13 +817,6 @@ def render_sidebar() -> dict:
 
         st.header("Load")
         max_weight = st.number_input("Rated load (kg)", 200.0, 2500.0, value=630.0, step=10.0)
-        current_weight = st.slider(
-            "Current cabin weight (kg)",
-            0.0,
-            float(max_weight),
-            value=0.0,
-            step=10.0,
-        )
 
         st.header("Detection")
         conf_threshold = st.slider("YOLO confidence", 0.10, 0.90, 0.40, 0.05)
@@ -945,19 +824,6 @@ def render_sidebar() -> dict:
         st.header("Decision thresholds")
         weight_threshold = st.slider("Weight bypass τ_W", 0.50, 1.00, 0.80, 0.05)
         area_threshold = st.slider("Area bypass τ_A", 0.50, 1.00, 0.90, 0.05)
-
-        st.header("Class footprints (m²)")
-        with st.expander("Override defaults"):
-            person_m2 = st.number_input("person", value=DEFAULT_AREAS_M2["person"], step=0.01)
-            stroller_m2 = st.number_input("stroller", value=DEFAULT_AREAS_M2["stroller"], step=0.01)
-            luggage_m2 = st.number_input("luggage", value=DEFAULT_AREAS_M2["luggage"], step=0.01)
-            box_m2 = st.number_input("box", value=DEFAULT_AREAS_M2["box"], step=0.01)
-        class_areas = {
-            "person": person_m2,
-            "stroller": stroller_m2,
-            "luggage": luggage_m2,
-            "box": box_m2,
-        }
 
         st.header("Model")
         st.caption(
@@ -970,139 +836,10 @@ def render_sidebar() -> dict:
         "depth_m": depth_m,
         "cabin_m2": cabin_m2,
         "max_weight": max_weight,
-        "current_weight": current_weight,
         "conf_threshold": conf_threshold,
         "weight_threshold": weight_threshold,
         "area_threshold": area_threshold,
-        "class_areas": class_areas,
     }
-
-
-def render_single_frame_tab(cfg: dict) -> None:
-    """Single-image detection + decision (the original demo screen).
-
-    All cabin / detection / threshold parameters come from the sidebar
-    via ``cfg`` so they stay consistent with the Batch Simulation tab.
-    """
-    cabin_m2 = cfg["cabin_m2"]
-    max_weight = cfg["max_weight"]
-    current_weight = cfg["current_weight"]
-    conf_threshold = cfg["conf_threshold"]
-    weight_threshold = cfg["weight_threshold"]
-    area_threshold = cfg["area_threshold"]
-    class_areas = cfg["class_areas"]
-
-    # ─── Main: input + output ─────────────────────────────────────────
-    col_input, col_output = st.columns([1, 1])
-
-    img_array: np.ndarray | None = None
-
-    with col_input:
-        st.subheader("Input")
-        upload = st.file_uploader("Upload an elevator CCTV image", type=["jpg", "jpeg", "png"])
-
-        sample_choice = "—"
-        if SAMPLE_DIR.exists():
-            samples = sorted(SAMPLE_DIR.glob("*.jpg"))[:8]
-            if samples:
-                sample_choice = st.selectbox(
-                    "…or pick a bundled test sample",
-                    options=["—"] + [p.name for p in samples],
-                )
-
-        if upload is not None:
-            img_array = np.array(Image.open(upload).convert("RGB"))
-            st.image(img_array, caption="Uploaded frame", use_container_width=True)
-        elif sample_choice != "—":
-            sample_path = SAMPLE_DIR / sample_choice
-            img_array = np.array(Image.open(sample_path).convert("RGB"))
-            st.image(img_array, caption=sample_choice, use_container_width=True)
-
-    with col_output:
-        st.subheader("Analysis")
-
-        if img_array is None:
-            st.info("Upload an image or pick a sample on the left.")
-            return
-
-        missing: list[str] = []
-        if not DEFAULT_WEIGHTS.exists():
-            missing.append(str(DEFAULT_WEIGHTS))
-        if not DEFAULT_HEAD_WEIGHTS.exists():
-            missing.append(str(DEFAULT_HEAD_WEIGHTS))
-        if missing:
-            st.error("Required weights not found:\n- " + "\n- ".join(missing))
-            st.caption(
-                "Place the trained checkpoints under ``models/weights/`` "
-                "(see notebooks/02_train.ipynb and notebooks/05_head_model_training.ipynb)."
-            )
-            return
-
-        if not st.button("▶ Analyze frame", type="primary"):
-            st.caption("Click the button above to run the detector.")
-            return
-
-        with st.spinner("Running detectors…"):
-            model = load_model(str(DEFAULT_WEIGHTS))
-            head_model = load_model(str(DEFAULT_HEAD_WEIGHTS))
-            result = run_analysis(
-                image=img_array,
-                model=model,
-                cabin_m2=cabin_m2,
-                class_areas=class_areas,
-                conf_threshold=conf_threshold,
-                weight_kg=current_weight,
-                max_weight_kg=max_weight,
-                weight_threshold=weight_threshold,
-                area_threshold=area_threshold,
-                head_model=head_model,
-            )
-
-        st.image(
-            result.annotated_image,
-            caption="3-class + head detections: object detector (default colours) + head detector (red)",
-            use_container_width=True,
-        )
-
-        # ── Decision badge ───────────────────────────────────────────
-        emoji, label, level = DECISION_LABELS[result.decision]
-        message = f"{emoji}  **{label}** — {result.decision_reason}"
-        getattr(st, level)(message)
-
-        # ── Metrics row ──────────────────────────────────────────────
-        m1, m2, m3 = st.columns(3)
-        m1.metric(
-            "Occupancy",
-            f"{result.occupancy_ratio * 100:.1f}%",
-            f"{result.occupied_m2:.2f} / {result.cabin_m2:.2f} m²",
-        )
-        m2.metric(
-            "Weight",
-            f"{result.weight_ratio * 100:.0f}%",
-            f"{result.weight_kg:.0f} / {result.max_weight_kg:.0f} kg",
-        )
-        m3.metric("Detections", sum(result.counts.values()))
-
-        # ── Per-class breakdown table ────────────────────────────────
-        if result.counts:
-            st.markdown("**Per-class breakdown**")
-            rows = [
-                {
-                    "Class": cls,
-                    "Count": result.counts[cls],
-                    "Area (m²)": f"{result.breakdown_m2[cls]:.2f}",
-                }
-                for cls in result.counts
-            ]
-            st.table(rows)
-        else:
-            st.info("No objects detected in this frame.")
-
-        # ── Occupancy progress bar ───────────────────────────────────
-        st.progress(
-            result.occupancy_ratio,
-            text=f"Floor occupancy: {result.occupancy_ratio * 100:.1f}%",
-        )
 
 
 def main() -> None:
@@ -1113,19 +850,14 @@ def main() -> None:
     )
     st.title("🛗 Smart Elevator CV — Live Demo")
     st.markdown(
-        "Upload a CCTV frame from an elevator cabin. The system detects "
-        "people, strollers, luggage, and boxes; estimates floor occupancy "
-        "with industry-standard footprints; and decides whether the next "
-        "hall call should be **accepted** or **bypassed**."
+        "Run the curated ground-truth set in `data/sim/` through the "
+        "trained detectors, then inspect bypass-decision accuracy, "
+        "object-level counting metrics and cumulative energy savings."
     )
 
     cfg = render_sidebar()
 
-    tab_single, tab_batch, tab_timeline = st.tabs(
-        ["Single Frame", "Batch Simulation", "Call Timeline"]
-    )
-    with tab_single:
-        render_single_frame_tab(cfg)
+    tab_batch, tab_timeline = st.tabs(["Batch Simulation", "Call Timeline"])
     with tab_batch:
         render_batch_tab(cfg)
     with tab_timeline:

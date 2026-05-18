@@ -108,7 +108,7 @@ A heavy cabin therefore costs proportionally more motor energy than a light one,
 
 ## Results
 
-The two-detector system was measured on **67 cabin photographs** covering the empty → at-capacity spectrum. Each photo carries multi-class ground truth (`gt_person`, `gt_stroller`, `gt_luggage`, `gt_box`). 1 000 synthetic hall calls were sampled uniformly from this set, and three policies (always-accept / weight-only / smart) were evaluated on the same call stream.
+The two-detector system was measured on **68 cabin photographs** covering the empty → at-capacity spectrum. Each photo carries multi-class ground truth (`gt_person`, `gt_stroller`, `gt_luggage`, `gt_box`). 1 000 synthetic hall calls were sampled uniformly from this set, and three policies (always-accept / weight-only / smart) were evaluated on the same call stream.
 
 ### Bypass-decision quality (smart policy vs optimal-policy ground truth)
 
@@ -116,9 +116,9 @@ Ground truth here is `gt_should_bypass = gt_is_full OR gt_weight_full`, i.e. the
 
 | Configuration | Bypass acc. | Precision | Recall | F1 | Person MAE |
 |---|:---:|:---:|:---:|:---:|:---:|
-| **Smart (proposed)** | **0.955** | **0.950** | **0.905** | **0.927** | **0.67** |
+| **Smart (proposed)** | **0.908** | **1.000** | **0.727** | **0.842** | **0.66** |
 
-The system records one false positive (`cabin_033`, where the object detector over-counts luggage by three) and two false negatives on crowded cabins in which the head detector failed to recover a small number of heads under heavy occlusion.
+The smart policy records **zero false positives**: no incoming passenger was ever wrongly skipped. The remaining error mode is six false negatives on crowded cabins in which the head detector failed to recover enough heads to push occupancy above τ_A.
 
 ### Energy and stop-time savings (over 1 000 synthetic hall calls)
 
@@ -126,15 +126,15 @@ The system records one false positive (`cabin_033`, where the object detector ov
 |---|:---:|:---:|:---:|:---:|
 | Always-accept (naive) | 0 | 920.0 kJ | — | — |
 | Weight-only (current industry) | 126 | 804.1 kJ | 115.9 kJ (12.6 %) | — |
-| **Smart (proposed)** | 283 | **659.6 kJ** | **260.4 kJ (28.3 %)** | **144.4 kJ (18.0 %)** |
+| **Smart (proposed)** | 226 | **712.1 kJ** | **207.9 kJ (22.6 %)** | **92.0 kJ (11.4 %)** |
 
 | Policy | Total stop-time | Δ vs weight-only |
 |---|:---:|:---:|
 | Always-accept | 10 000 s (166.7 min) | — |
 | Weight-only | 8 740 s (145.7 min) | — |
-| **Smart (proposed)** | **7 170 s** (119.5 min) | **1 570 s = 26.2 min (18.0 %)** |
+| **Smart (proposed)** | **7 740 s** (129.0 min) | **1 000 s = 16.7 min (11.4 %)** |
 
-The headline result is **smart vs weight-only**: the area gate adds **18.0 % extra energy / time savings on top of a current-industry load-cell-only system**. Service rate stays at **98.9 %** (only 11 / 1000 calls are wrongly skipped).
+The headline result is **smart vs weight-only**: the area gate adds **11.4 % extra energy / time savings on top of a current-industry load-cell-only system**. Service rate is **90.5 %** — but crucially, **0 of those 95 missed calls are passengers who were wrongly skipped**; every error is a wasted stop on an already-full cabin, which costs only a door cycle.
 
 ### Underlying detection metrics (validation splits)
 
@@ -235,7 +235,7 @@ read off the decision) and *Batch Simulation* (auto-loads whatever
 
 ## Limitations
 
-* **Synthetic test set.** The 67 cabin images used in the simulation are publicly-available frames augmented with AI-generated cabin photos (ChatGPT, Gemini text-to-image). They cover the full occupancy spectrum, but they are not real CCTV footage — a domain gap to a deployed camera should be expected. Real CCTV footage was not collected because no IRB / ethics-committee approval was obtained within the project scope. Re-running the same protocol on real footage from a target building is the natural next step.
+* **Synthetic test set.** The 68 cabin images used in the simulation are publicly-available frames augmented with AI-generated cabin photos (ChatGPT, Gemini text-to-image). They cover the full occupancy spectrum, but they are not real CCTV footage — a domain gap to a deployed camera should be expected. Real CCTV footage was not collected because no IRB / ethics-committee approval was obtained within the project scope. Re-running the same protocol on real footage from a target building is the natural next step.
 * **No homography.** The class-footprint occupancy model ignores where each object sits on the floor. When two passengers stand shoulder-to-shoulder, the model still adds the full 0.20 m² twice. A position-aware alternative — for example a homography-based union of per-class disks or a birds-eye-view occupancy mask — would only require four manually clicked floor corners per cabin and is listed as future work.
 * **Single-frame inference.** Multi-frame tracking (BoT-SORT, ByteTrack) would prevent the same passenger from being counted on consecutive frames if the system is later wired to a video stream. The current pipeline reads a single CCTV frame, matching the project's intended deployment.
 * **No real-time benchmark.** Inference latency / FPS has not been profiled on a target edge device; "real-time" claims in the literature review are inherited from the YOLOv8 architecture and not measured for this prototype.

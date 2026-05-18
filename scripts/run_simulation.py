@@ -1128,50 +1128,56 @@ def write_markdown_report(
     lines.append("")
 
     # ── Service quality (operational consequences of misclassifications) ──
+    # Aligned with Report §4.5 / Table 4.6: aggregate 1,000-call outcome
+    # breakdown (TP / TN / FP / FN counts, energy attribution, service rate)
+    # with the cost-asymmetry argument. Per-floor distribution intentionally
+    # omitted because the simulation samples cabins uniformly and the
+    # algorithm is floor-agnostic, so any per-floor split is sample noise.
     n = stats.num_calls
-    # FP cases mean the passenger was *incorrectly* skipped — they were not served.
-    service_rate = (n - stats.smart_wrong_bypass) / max(1, n)
+    # Service rate = correct-decision rate (TP + TN) / n.  This matches the
+    # thesis §4.5 prose: the service-rate cost is paid both by wasted stops
+    # (FN, which reduce the numerator) and by wrongly-skipped passengers
+    # (FP, ditto); FP=0 in this run means the cost is entirely from FN.
+    service_rate = (stats.smart_correct_bypass + stats.smart_correct_accept) / max(1, n)
+    tp_kj = stats.smart_saved_correctly_j / 1000
+    fn_kj = stats.smart_wasted_j / 1000
     lines.append("## Service quality\n")
     lines.append(
-        "Beyond raw energy, every misclassification has an operational "
-        "consequence — a passenger who waits, or a stop where nobody fits. "
-        "The four outcome classes are tallied below.\n"
+        "Each misclassification has a distinct operational consequence "
+        "beyond the raw energy figure. The outcome breakdown for the "
+        "smart configuration is tallied below.\n"
     )
-    lines.append("| Outcome | Count | Operational meaning |")
-    lines.append("|---|:---:|---|")
+    lines.append("| Outcome | Count | Stop-overhead energy | Operational meaning |")
+    lines.append("|---|:---:|---|---|")
     lines.append(
-        f"| ✅ TP — correct bypass | {stats.smart_correct_bypass} | "
-        f"Cabin was full, smart skipped it (saved {stats.smart_saved_correctly_j / 1000:.1f} kJ) |"
-    )
-    lines.append(
-        f"| ✅ TN — correct accept | {stats.smart_correct_accept} | "
-        f"Cabin had room, smart stopped (normal service) |"
+        f"| True positive (TP)  | {stats.smart_correct_bypass} | "
+        f"{tp_kj:.1f} kJ saved | Saturated cabin correctly bypassed |"
     )
     lines.append(
-        f"| ⚠ FP — wrong bypass    | {stats.smart_wrong_bypass} | "
-        f"Cabin had room but smart skipped it: passenger waits |"
+        f"| True negative (TN)  | {stats.smart_correct_accept} | "
+        f"0 | Non-saturated cabin correctly accepted |"
     )
     lines.append(
-        f"| ❌ FN — wrong accept    | {stats.smart_wrong_accept} | "
-        f"Cabin was full but smart stopped: wasted "
-        f"{stats.smart_wasted_j / 1000:.1f} kJ on a useless stop |"
+        f"| False positive (FP) | {stats.smart_wrong_bypass} | "
+        f"0 | No incoming passenger wrongly skipped |"
+    )
+    lines.append(
+        f"| False negative (FN) | {stats.smart_wrong_accept} | "
+        f"{fn_kj:.1f} kJ foregone | Wasted stop at a saturated cabin |"
+    )
+    lines.append(
+        f"| **Total** | **{n}** | "
+        f"**Service rate = {100 * service_rate:.1f} %** | — |"
     )
     lines.append("")
     lines.append(
-        f"- **Service rate** (calls served / total): "
-        f"**{100 * service_rate:.1f}%**  "
-        f"(baseline always reaches 100%)"
+        "The service-rate cost is paid entirely in the form of wasted "
+        "stops (FN) rather than skipped passengers (FP); a wasted stop "
+        "costs one door cycle, whereas a skipped passenger costs trust."
     )
+    lines.append("")
     lines.append(
-        f"- Wasted-stop energy (FN): **{stats.smart_wasted_j / 1000:.1f} kJ** "
-        f"({100 * stats.smart_wasted_j / max(1.0, stats.smart_total_j):.1f}% of "
-        f"smart total)"
-    )
-    lines.append(
-        f"- Energy saved on correct bypasses (TP): {stats.smart_saved_correctly_j / 1000:.1f} kJ"
-    )
-    lines.append(
-        f"- Mean trip distance: **{stats.mean_distance_floors:.1f}** floors  "
+        f"- Mean trip distance: {stats.mean_distance_floors:.1f} floors  "
         f"(building has {args.floors_count} floors)"
     )
     lines.append("")
@@ -1492,7 +1498,10 @@ def main() -> int:
     print(f"  smart         = {sm_s:7.0f} s ({sm_s / 60:.1f} min)")
     print(f"  Δ smart vs always_accept = {saved_t_vs_aa:7.0f} s ({pct_t_vs_aa:.1f}%)")
     print(f"  Δ smart vs weight_only   = {saved_t_vs_wo:7.0f} s ({pct_t_vs_wo:.1f}%)")
-    service_rate = (stats.num_calls - stats.smart_wrong_bypass) / max(1, stats.num_calls)
+    # See the Service-quality section above for the formula rationale.
+    service_rate = (
+        stats.smart_correct_bypass + stats.smart_correct_accept
+    ) / max(1, stats.num_calls)
     print(
         f"Smart service quality: rate={100 * service_rate:.1f}%  "
         f"(TP={stats.smart_correct_bypass}  TN={stats.smart_correct_accept}  "

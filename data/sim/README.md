@@ -1,14 +1,14 @@
 # Energy-Saving Simulation — Test Image Set
 
 This directory hosts the curated cabin photographs and their ground-truth
-labels used by `scripts/run_simulation.py`. The current set is **67
+labels used by `scripts/run_simulation.py`. The current set is **68
 images** spanning empty → at-capacity scenarios.
 
 ## Layout
 
 ```
 data/sim/
-├── images/                       ← 67 cabin photos (cabin_001.png … cabin_067.png)
+├── images/                       ← 68 cabin photos (cabin_001.png … cabin_068.png)
 ├── ground_truth.csv              ← per-image multi-class labels
 └── ground_truth_template.csv     ← starter template if extending the set
 ```
@@ -16,7 +16,7 @@ data/sim/
 ## How to label
 
 1. Add cabin photographs covering the full occupancy spectrum.
-   The current 67-image set is balanced as roughly:
+   The current 68-image set is balanced as roughly:
    - ~25 **empty / lightly occupied** scenes (0–3 passengers, occ < 0.40)
    - ~30 **medium** scenes (4–6 passengers, 0.40 ≤ occ < 0.85)
    - ~12 **at-or-above capacity** scenes (≥ 7 persons or area-saturated)
@@ -64,7 +64,7 @@ python -m scripts.run_simulation \
     --rated-capacity 8 \
     --conf-threshold 0.40 \
     --num-calls 1000 \
-    --output results/simulation/baseline_67
+    --output results/simulation/baseline_68
 
 # 3-class + head detector (object detector + head detector for person)
 python -m scripts.run_simulation \
@@ -76,15 +76,13 @@ python -m scripts.run_simulation \
     --conf-threshold 0.40 \
     --head-conf 0.40 \
     --num-calls 1000 \
-    --output results/simulation/hybrid_67
+    --output results/simulation/hybrid_68
 ```
 
-The canonical thesis results under `results/simulation/baseline_4cls_67/`
-and `results/simulation/hybrid_67/` were produced with an earlier
-four-class checkpoint (`best_v2.pt`) and are kept for historical
-reference. The commands above reflect the current `best.pt` checkpoint,
-which is the three-class object detector (`person` is handled
-exclusively by `best_head.pt` in 3-class + head mode).
+The thesis results reported in §4 were produced with the current
+`best.pt` (three-class object detector) and `best_head.pt` (head
+detector) on the 68-image cabin set described above. `person` is
+handled exclusively by `best_head.pt` in 3-class + head mode.
 
 The script writes `confusion_matrix.png`, `per_image_decisions.csv`,
 `per_class_detection.csv`, `energy_savings.csv`, `call_log.csv` and
