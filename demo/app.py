@@ -917,7 +917,7 @@ def render_sidebar() -> dict:
         st.divider()
 
         # ── Model footer (read-only) ───────────────────────────────────
-        with st.expander("ℹ️ Model weights", expanded=False):
+        with st.expander("Models", expanded=False):
             st.caption(
                 f"📦 Object detector:  `{DEFAULT_WEIGHTS.relative_to(ROOT)}`  \n"
                 f"👤 Head detector:    `{DEFAULT_HEAD_WEIGHTS.relative_to(ROOT)}`"
