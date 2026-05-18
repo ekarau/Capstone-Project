@@ -15,9 +15,8 @@ is the standardised footprint area for class :math:`c` (ISO 8100-32:2020
 §6.4, EN 81-20:2020 §5.4.2.1.1, EN 1888-1:2018, IATA Resolution 753 —
 see ``configs/default.yaml``).
 
-This module exposes the :class:`OccupancyEstimator` interface and the
-:class:`ClassFootprintOccupancy` concrete implementation used by both
-the simulation script and the Streamlit demo. The estimator is
+This module exposes the :class:`ClassFootprintOccupancy` estimator used
+by both the simulation script and the Streamlit demo. The estimator is
 position-agnostic: two passengers standing shoulder-to-shoulder are
 still counted as :math:`2 \\cdot \\bar{a}_{\\text{person}}`. Position-aware
 variants (homography union-of-disks, BEV mask) are listed in thesis
@@ -26,19 +25,8 @@ variants (homography union-of-disks, BEV mask) are listed in thesis
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
-
-from src.detection.detector import Detection
-
-
-class OccupancyEstimator(ABC):
-    """Returns the cabin occupancy ratio in [0, 1]."""
-
-    @abstractmethod
-    def estimate(self, detections: Sequence[Detection]) -> float: ...
 
 
 @dataclass(frozen=True)
@@ -58,7 +46,7 @@ class OccupancyBreakdown:
     ratio: float
 
 
-class ClassFootprintOccupancy(OccupancyEstimator):
+class ClassFootprintOccupancy:
     """Thesis §3.5 footprint model — single source of truth for ρ.
 
     Parameters
@@ -80,10 +68,6 @@ class ClassFootprintOccupancy(OccupancyEstimator):
     ) -> None:
         self.footprints_m2: dict[str, float] = dict(footprints_m2)
         self.cabin_m2: float = float(cabin_m2)
-
-    def estimate(self, detections: Sequence[Detection]) -> float:
-        counts = Counter(d.class_name for d in detections)
-        return self.estimate_from_counts(counts)
 
     def estimate_from_counts(self, counts: Mapping[str, int]) -> float:
         return self.compute(counts).ratio

@@ -240,7 +240,7 @@ Non-Maximum Suppression at inference: `iou_threshold = 0.45`,
 
 ## Stage 4 — Per-frame inference
 
-**Code:** [`scripts/run_simulation.py:275`](../scripts/run_simulation.py) `predict_image()`, [`src/detection/detector.py`](../src/detection/detector.py)
+**Code:** [`scripts/run_simulation.py:275`](../scripts/run_simulation.py) `predict_image()`
 
 ```
 CCTV frame  (BGR np.ndarray)
@@ -310,7 +310,9 @@ $$
 
 ## Stage 6 — Two-stage decision (Algorithm 1)
 
-**Code:** [`src/control/algorithm.py:65`](../src/control/algorithm.py) `ElevatorController.decide()`
+**Code:** [`scripts/run_simulation.py:1360`](../scripts/run_simulation.py) — the smart-policy decision is inlined into `main()` as
+`smart_bypass = gt.gt_weight_full or pred_full`, evaluated per image. The simulation script is the single
+source of truth for the two-stage policy; there is no separate controller class.
 
 Thresholds: $\tau_W = 0.80$, $\tau_A = 0.90$, $W_{\text{rated}} = 630\,\text{kg}$, so
 the Stage 1 trip-point is $0.80 \times 630 = 504\,\text{kg}$.
@@ -605,9 +607,8 @@ produced).
 | Augmentation | [`src/dataset/augment.py`](../src/dataset/augment.py) |
 | Dataset audit | [`src/dataset/audit.py`](../src/dataset/audit.py) |
 | Training | [`src/detection/train.py`](../src/detection/train.py) |
-| Inference wrapper | [`src/detection/detector.py`](../src/detection/detector.py) |
 | Occupancy | [`src/perception/occupancy.py`](../src/perception/occupancy.py) |
-| Decision policy | [`src/control/algorithm.py`](../src/control/algorithm.py) |
+| Decision policy | Inlined in [`scripts/run_simulation.py`](../scripts/run_simulation.py) |
 | Energy model | [`src/energy/consumption.py`](../src/energy/consumption.py) |
 | End-to-end simulation | [`scripts/run_simulation.py`](../scripts/run_simulation.py) |
 | Dataset prep CLI | [`scripts/prepare_dataset.py`](../scripts/prepare_dataset.py) |
