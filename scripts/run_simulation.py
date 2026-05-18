@@ -1165,10 +1165,7 @@ def write_markdown_report(
         f"| False negative (FN) | {stats.smart_wrong_accept} | "
         f"{fn_kj:.1f} kJ foregone | Wasted stop at a saturated cabin |"
     )
-    lines.append(
-        f"| **Total** | **{n}** | "
-        f"**Service rate = {100 * service_rate:.1f} %** | — |"
-    )
+    lines.append(f"| **Total** | **{n}** | **Service rate = {100 * service_rate:.1f} %** | — |")
     lines.append("")
     lines.append(
         "The service-rate cost is paid entirely in the form of wasted "
@@ -1499,9 +1496,9 @@ def main() -> int:
     print(f"  Δ smart vs always_accept = {saved_t_vs_aa:7.0f} s ({pct_t_vs_aa:.1f}%)")
     print(f"  Δ smart vs weight_only   = {saved_t_vs_wo:7.0f} s ({pct_t_vs_wo:.1f}%)")
     # See the Service-quality section above for the formula rationale.
-    service_rate = (
-        stats.smart_correct_bypass + stats.smart_correct_accept
-    ) / max(1, stats.num_calls)
+    service_rate = (stats.smart_correct_bypass + stats.smart_correct_accept) / max(
+        1, stats.num_calls
+    )
     print(
         f"Smart service quality: rate={100 * service_rate:.1f}%  "
         f"(TP={stats.smart_correct_bypass}  TN={stats.smart_correct_accept}  "

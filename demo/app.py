@@ -630,8 +630,7 @@ def render_batch_tab(cfg: dict) -> None:
                 )
             if ok:
                 st.success(
-                    f"Simulation finished → results/simulation/{run_name}/  "
-                    f"(seed={sim_seed})"
+                    f"Simulation finished → results/simulation/{run_name}/  (seed={sim_seed})"
                 )
             else:
                 st.error("Simulation failed. See the captured output below.")
