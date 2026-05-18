@@ -13,9 +13,12 @@ the trained detectors and exposes two views:
     * **Call Timeline** — replay individual hall calls from any saved
       run, filtered by TP / TN / FP / FN outcome.
 
-Sidebar controls — cabin geometry, rated load, YOLO confidence and the
-two decision thresholds — drive both tabs and the next
-``Run simulation now`` honours them.
+The unified sidebar holds every parameter that influences the
+simulation — cabin geometry, rated load, both detector confidences,
+both decision thresholds and the call-stream controls — plus the
+"Run simulation" button at the bottom. Every widget there is wired
+through to ``scripts.run_simulation`` as a CLI flag, so changing a
+value and clicking Run produces a numerically different result.
 """
 
 from __future__ import annotations
@@ -106,12 +109,18 @@ def _run_simulation(
     head_conf: float,
     cls_conf: float,
     rated_capacity: int,
+    rated_load_kg: float,
+    weight_bypass_ratio: float,
     num_calls: int,
     cabin_m2: float,
     area_threshold: float,
     seed: int = 42,
 ) -> tuple[bool, str]:
-    """Invoke scripts.run_simulation as a subprocess. Returns (ok, stdout)."""
+    """Invoke scripts.run_simulation as a subprocess. Returns (ok, stdout).
+
+    Every sidebar widget is mapped to a CLI flag here, so anything the
+    user changes upstream propagates straight into the simulation.
+    """
     import subprocess
     import sys as _sys
 
@@ -131,6 +140,10 @@ def _run_simulation(
         f"{cls_conf:.2f}",
         "--rated-capacity",
         str(rated_capacity),
+        "--rated-load-kg",
+        f"{rated_load_kg:.1f}",
+        "--weight-bypass-ratio",
+        f"{weight_bypass_ratio:.2f}",
         "--num-calls",
         str(num_calls),
         "--cabin-m2",
@@ -528,108 +541,76 @@ def render_timeline_tab() -> None:
 def render_batch_tab(cfg: dict) -> None:
     """Run / inspect batch energy simulations.
 
-    Cabin geometry, max load, area / weight thresholds, confidence
-    threshold and per-class footprints are taken from the sidebar so
-    both tabs stay consistent. Override anything via the sidebar and
-    the next ``Run simulation now`` reflects it.
+    All parameters live in the unified sidebar. When the user clicks
+    ``Run simulation`` there, ``cfg["run_clicked"]`` becomes True and
+    this function dispatches a subprocess call with every sidebar value
+    threaded through.
     """
     st.subheader("Batch Energy Simulation")
     st.markdown(
         "Run the curated ground-truth set in `data/sim/` through the "
-        "trained detector(s) and inspect the bypass-decision and counting "
-        "accuracies side by side. **Cabin and threshold values come from "
-        "the sidebar on the left.**"
+        "trained detectors and inspect bypass-decision accuracy, "
+        "counting metrics and cumulative energy savings. **Every "
+        "parameter is on the left sidebar — change a value, click "
+        "*Run simulation*, see the numbers move.**"
     )
 
     # Honest tell-tale: thesis numbers were computed with these defaults.
-    THESIS_W, THESIS_D, THESIS_TAUW, THESIS_TAUA = 1.4, 1.6, 0.80, 0.90
+    THESIS_W, THESIS_D, THESIS_LOAD, THESIS_TAUW, THESIS_TAUA = 1.4, 1.6, 630.0, 0.80, 0.90
     diverged = (
         abs(cfg["width_m"] - THESIS_W) > 1e-3
         or abs(cfg["depth_m"] - THESIS_D) > 1e-3
-        or abs(cfg["weight_threshold"] - THESIS_TAUW) > 1e-3
-        or abs(cfg["area_threshold"] - THESIS_TAUA) > 1e-3
+        or abs(cfg["rated_load_kg"] - THESIS_LOAD) > 1e-3
+        or abs(cfg["weight_bypass_ratio"] - THESIS_TAUW) > 1e-3
+        or abs(cfg["area_bypass_ratio"] - THESIS_TAUA) > 1e-3
     )
     if diverged:
         st.warning(
             f"Sidebar overrides the thesis defaults "
-            f"(cabin {THESIS_W}x{THESIS_D} m, τ_W={THESIS_TAUW}, τ_A={THESIS_TAUA}). "
+            f"(cabin {THESIS_W}×{THESIS_D} m, rated load {THESIS_LOAD:.0f} kg, "
+            f"τ_W={THESIS_TAUW}, τ_A={THESIS_TAUA}). "
             "Numbers from a run started now will not match the published table."
         )
 
-    # ─── Run controls ────────────────────────────────────────────────
-    with st.expander("▶ Run a new simulation", expanded=False):
-        col_a, col_b = st.columns(2)
-        with col_a:
-            run_name = st.text_input(
-                "Output directory name",
-                value="from_demo",
-                help="Created under results/simulation/<name>/",
-            )
-            head_conf = st.slider(
-                "Head detector confidence",
-                0.10,
-                0.90,
-                0.40,
-                0.05,
-                help="Detection threshold for the head model only. "
-                "The object detector threshold comes from the sidebar.",
-            )
-        with col_b:
-            num_calls = st.number_input("Synthetic hall calls", 100, 5000, value=1000, step=100)
-            seed_mode = st.radio(
-                "Call-stream seed",
-                ["Random 🎲", "Fixed (=42)"],
-                horizontal=True,
-                index=0,
-                help=(
-                    "Random — generate a fresh seed on every click, so the "
-                    "1,000-call stream is different each run.  "
-                    "Fixed — reuse seed = 42, which reproduces the thesis "
-                    "numbers exactly."
-                ),
-            )
-
-        # Rated capacity is derived from the sidebar Rated load (75 kg / passenger).
-        rated_capacity = max(1, round(cfg["max_weight"] / 75.0))
-        st.caption(
-            f"Rated capacity (auto-derived from Rated load): "
-            f"**{rated_capacity} persons**  ·  "
-            f"Cabin: **{cfg['cabin_m2']:.2f} m²**  ·  "
-            f"τ_A=**{cfg['area_threshold']:.2f}**  ·  "
-            f"Object det. conf=**{cfg['conf_threshold']:.2f}**"
-        )
-
+    # ─── Run dispatcher (sidebar button) ─────────────────────────────
+    if cfg["run_clicked"]:
         weights_path = DEFAULT_WEIGHTS
         head_path = DEFAULT_HEAD_WEIGHTS
         if not weights_path.exists():
             st.error(f"Object detector weights not found at {weights_path}.")
         elif not head_path.exists():
             st.error(f"Head detector weights not found at {head_path}.")
-        elif st.button("▶ Run simulation now", type="primary"):
-            # Resolve the seed at click time so a single random click produces
-            # one call stream (further reruns of this widget alone don't
-            # regenerate it; only a fresh click does).
+        else:
+            # Resolve the seed at click time so a single Random click yields
+            # one call stream (further reruns alone don't regenerate it;
+            # only a fresh click does).
             import random as _random
 
-            sim_seed = _random.randint(0, 2_000_000_000) if seed_mode.startswith("Random") else 42
+            sim_seed = (
+                _random.randint(0, 2_000_000_000) if cfg["seed_mode"].startswith("Random") else 42
+            )
             with st.spinner(
-                f"Running simulation → {run_name} (seed={sim_seed}) (this can take a minute) …"
+                f"Running simulation → {cfg['run_name']} (seed={sim_seed}) "
+                "(this can take a minute) …"
             ):
                 ok, output = _run_simulation(
-                    run_name=run_name,
+                    run_name=cfg["run_name"],
                     weights=weights_path,
                     head_weights=head_path,
-                    head_conf=head_conf,
-                    cls_conf=cfg["conf_threshold"],
-                    rated_capacity=rated_capacity,
-                    num_calls=num_calls,
+                    head_conf=cfg["head_conf"],
+                    cls_conf=cfg["cls_conf"],
+                    rated_capacity=cfg["rated_capacity"],
+                    rated_load_kg=cfg["rated_load_kg"],
+                    weight_bypass_ratio=cfg["weight_bypass_ratio"],
+                    num_calls=cfg["num_calls"],
                     cabin_m2=cfg["cabin_m2"],
-                    area_threshold=cfg["area_threshold"],
+                    area_threshold=cfg["area_bypass_ratio"],
                     seed=sim_seed,
                 )
             if ok:
                 st.success(
-                    f"Simulation finished → results/simulation/{run_name}/  (seed={sim_seed})"
+                    f"Simulation finished → "
+                    f"`results/simulation/{cfg['run_name']}/`  (seed={sim_seed})"
                 )
             else:
                 st.error("Simulation failed. See the captured output below.")
@@ -800,43 +781,167 @@ def render_batch_tab(cfg: dict) -> None:
 
 
 def render_sidebar() -> dict:
-    """Render the global sidebar and return all configuration values.
+    """Render the unified control panel and return every parameter the
+    simulation honours, plus the Run-button state.
 
-    These values drive the Batch Simulation tab (and the subprocess that
-    ``scripts.run_simulation`` spawns) — change a slider once and the
-    next run honours it.
+    Every widget here maps 1-to-1 to a CLI flag in ``_run_simulation``,
+    so changing any value and clicking *Run simulation* produces a
+    numerically different run. Sections are visually separated with
+    dividers; the Run button sits at the bottom so it's always reachable.
     """
     with st.sidebar:
-        st.header("Cabin geometry")
-        width_m = st.number_input("Width (m)", 0.5, 3.0, value=1.4, step=0.05)
-        depth_m = st.number_input("Depth (m)", 0.5, 3.0, value=1.6, step=0.05)
+        st.title("🛗 Controls")
+        st.caption("Change any value, then click **Run simulation** below.")
+
+        # ── Cabin geometry ─────────────────────────────────────────────
+        st.subheader("📐 Cabin geometry")
+        c1, c2 = st.columns(2)
+        with c1:
+            width_m = st.number_input(
+                "Width (m)",
+                0.5,
+                3.0,
+                value=1.4,
+                step=0.05,
+                help="Cabin width — combined with depth to derive floor area.",
+            )
+        with c2:
+            depth_m = st.number_input(
+                "Depth (m)",
+                0.5,
+                3.0,
+                value=1.6,
+                step=0.05,
+                help="Cabin depth — combined with width to derive floor area.",
+            )
         cabin_m2 = width_m * depth_m
-        st.caption(f"Floor area = **{cabin_m2:.2f} m²**")
+        st.caption(f"Floor area  →  **{cabin_m2:.2f} m²**")
 
-        st.header("Load")
-        max_weight = st.number_input("Rated load (kg)", 200.0, 2500.0, value=630.0, step=10.0)
+        st.divider()
 
-        st.header("Detection")
-        conf_threshold = st.slider("YOLO confidence", 0.10, 0.90, 0.40, 0.05)
+        # ── Load ───────────────────────────────────────────────────────
+        st.subheader("⚖️ Load")
+        rated_load_kg = st.number_input(
+            "Rated load (kg)",
+            200.0,
+            2500.0,
+            value=630.0,
+            step=10.0,
+            help="Manufacturer's rated cabin load. Drives both the "
+            "Stage-1 weight gate and the auto-derived passenger capacity.",
+        )
+        rated_capacity = max(1, round(rated_load_kg / 75.0))
+        st.caption(f"Rated capacity  →  **{rated_capacity} persons**  (75 kg / passenger)")
 
-        st.header("Decision thresholds")
-        weight_threshold = st.slider("Weight bypass τ_W", 0.50, 1.00, 0.80, 0.05)
-        area_threshold = st.slider("Area bypass τ_A", 0.50, 1.00, 0.90, 0.05)
+        st.divider()
 
-        st.header("Model")
-        st.caption(
-            f"Object detector: `{DEFAULT_WEIGHTS.relative_to(ROOT)}`  \n"
-            f"Head detector:   `{DEFAULT_HEAD_WEIGHTS.relative_to(ROOT)}`"
+        # ── Detection confidences ──────────────────────────────────────
+        st.subheader("👁️ Detection")
+        cls_conf = st.slider(
+            "Object detector confidence",
+            0.10,
+            0.90,
+            0.40,
+            0.05,
+            help="3-class model (stroller / luggage / box). Lower = more "
+            "recall, less precision.",
+        )
+        head_conf = st.slider(
+            "Head detector confidence",
+            0.10,
+            0.90,
+            0.40,
+            0.05,
+            help="Head model (person count). Lower = more recall, fewer "
+            "FN at the cost of occasional spurious heads.",
         )
 
+        st.divider()
+
+        # ── Decision thresholds ────────────────────────────────────────
+        st.subheader("🎯 Decision thresholds")
+        weight_bypass_ratio = st.slider(
+            "Weight gate  τ_W",
+            0.50,
+            1.00,
+            0.80,
+            0.05,
+            help="Stage-1 bypass when load ≥ τ_W × rated load.",
+        )
+        area_bypass_ratio = st.slider(
+            "Area gate  τ_A",
+            0.50,
+            1.00,
+            0.90,
+            0.05,
+            help="Stage-2 bypass when visual occupancy ρ ≥ τ_A.",
+        )
+        st.caption(f"Stage-1 trip-point  →  **{weight_bypass_ratio * rated_load_kg:.0f} kg**")
+
+        st.divider()
+
+        # ── Simulation controls ────────────────────────────────────────
+        st.subheader("🎲 Simulation")
+        num_calls = st.number_input(
+            "Synthetic hall calls",
+            100,
+            5000,
+            value=1000,
+            step=100,
+            help="Number of calls sampled uniformly from the labelled set.",
+        )
+        seed_mode = st.radio(
+            "Call-stream seed",
+            ["Random 🎲", "Fixed (=42)"],
+            horizontal=True,
+            index=0,
+            help="Random — fresh seed every click. "
+            "Fixed — seed 42 (reproduces the thesis numbers).",
+        )
+        run_name = st.text_input(
+            "Output directory",
+            value="from_demo",
+            help="Created under results/simulation/<name>/",
+        )
+
+        st.divider()
+
+        # ── Run button ─────────────────────────────────────────────────
+        run_clicked = st.button(
+            "🚀 Run simulation",
+            type="primary",
+            use_container_width=True,
+            help="Spawns scripts.run_simulation with every sidebar value.",
+        )
+
+        st.divider()
+
+        # ── Model footer (read-only) ───────────────────────────────────
+        with st.expander("ℹ️ Model weights", expanded=False):
+            st.caption(
+                f"📦 Object detector:  `{DEFAULT_WEIGHTS.relative_to(ROOT)}`  \n"
+                f"👤 Head detector:    `{DEFAULT_HEAD_WEIGHTS.relative_to(ROOT)}`"
+            )
+
     return {
+        # Geometry
         "width_m": width_m,
         "depth_m": depth_m,
         "cabin_m2": cabin_m2,
-        "max_weight": max_weight,
-        "conf_threshold": conf_threshold,
-        "weight_threshold": weight_threshold,
-        "area_threshold": area_threshold,
+        # Load
+        "rated_load_kg": rated_load_kg,
+        "rated_capacity": rated_capacity,
+        # Detection
+        "cls_conf": cls_conf,
+        "head_conf": head_conf,
+        # Decision
+        "weight_bypass_ratio": weight_bypass_ratio,
+        "area_bypass_ratio": area_bypass_ratio,
+        # Simulation
+        "num_calls": num_calls,
+        "seed_mode": seed_mode,
+        "run_name": run_name,
+        "run_clicked": run_clicked,
     }
 
 
