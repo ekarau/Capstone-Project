@@ -576,7 +576,6 @@ def render_batch_tab(cfg: dict) -> None:
             )
         with col_b:
             num_calls = st.number_input("Synthetic hall calls", 100, 5000, value=1000, step=100)
-            use_head = st.checkbox("Use head detector (3-class + head mode)", value=True)
             seed_mode = st.radio(
                 "Call-stream seed",
                 ["Random 🎲", "Fixed (=42)"],
@@ -604,7 +603,7 @@ def render_batch_tab(cfg: dict) -> None:
         head_path = DEFAULT_HEAD_WEIGHTS
         if not weights_path.exists():
             st.error(f"Object detector weights not found at {weights_path}.")
-        elif use_head and not head_path.exists():
+        elif not head_path.exists():
             st.error(f"Head detector weights not found at {head_path}.")
         elif st.button("▶ Run simulation now", type="primary"):
             # Resolve the seed at click time so a single random click produces
@@ -619,7 +618,7 @@ def render_batch_tab(cfg: dict) -> None:
                 ok, output = _run_simulation(
                     run_name=run_name,
                     weights=weights_path,
-                    head_weights=head_path if use_head else None,
+                    head_weights=head_path,
                     head_conf=head_conf,
                     cls_conf=cfg["conf_threshold"],
                     rated_capacity=rated_capacity,
