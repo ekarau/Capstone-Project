@@ -843,8 +843,7 @@ def render_sidebar() -> dict:
             0.90,
             0.40,
             0.05,
-            help="3-class model (stroller / luggage / box). Lower = more "
-            "recall, less precision.",
+            help="3-class model (stroller / luggage / box). Lower = more recall, less precision.",
         )
         head_conf = st.slider(
             "Head detector confidence",
