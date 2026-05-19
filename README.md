@@ -152,10 +152,9 @@ demo/         Streamlit UI — single-frame analysis + batch simulation viewer
 notebooks/    Colab-ready notebooks: dataset audit, training, head training, demos
 src/
   dataset/    audit, unification, augmentation
-  detection/  YOLOv8 wrappers (training + inference)
-  perception/ occupancy estimator interface
+  detection/  YOLOv8 training entry point
+  perception/ class-footprint occupancy estimator
   energy/     elevator power model
-  control/    two-stage hall-call decision
   utils/      logging, config loader
 scripts/      command-line entry points (dataset prep, packaging, simulation)
 tests/        smoke tests for each module
